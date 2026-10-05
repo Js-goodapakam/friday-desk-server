@@ -1,0 +1,352 @@
+// use prisma-8
+
+model Property {
+  id          Int      @id @default(autoincrement())
+  name        String
+  code        String   @unique
+  brand       String?
+  city        String?
+  state       String?
+  country     String   @default("India")
+  timezone    String   @default("Asia/Kolkata")
+  createdAt   TimestamptzString @default(now())
+  updatedAt   temporal.updatedAtString()
+
+  users           User[]
+  roomTypes       RoomType[]
+  rooms           Room[]
+  guests          Guest[]
+  reservations    Reservation[]
+  payments        Payment[]
+  serviceRequests ServiceRequest[]
+  callLogs        CallLog[]
+}
+
+model User {
+  id          Int      @id @default(autoincrement())
+  propertyId  Int
+  name        String
+  email       String   @unique
+  phone       String?
+  role        UserRole @default(FRONT_DESK)
+  isActive    Boolean  @default(true)
+  createdAt   TimestamptzString @default(now())
+  updatedAt   temporal.updatedAtString()
+
+  property            Property @relation(fields: [propertyId], references: [id])
+  telecmiMapping       TeleCMIUserMapping?
+  createdReservations  Reservation[] @relation("ReservationCreatedBy")
+  assignedRequests     ServiceRequest[] @relation("ServiceRequestAssignee")
+  callLogs             CallLog[] @relation("CallHandledBy")
+}
+
+model TeleCMIUserMapping {
+  id             Int      @id @default(autoincrement())
+  userId         Int      @unique
+  telecmiUserId  String?
+  agentId        String
+  extension      Int?
+  isActive       Boolean  @default(true)
+  createdAt      TimestamptzString @default(now())
+  updatedAt      temporal.updatedAtString()
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model RoomType {
+  id          Int      @id @default(autoincrement())
+  propertyId  Int
+  name        String
+  code        String
+  description String?
+  maxAdults   Int      @default(2)
+  maxChildren Int      @default(0)
+  baseRate    String
+  isActive    Boolean  @default(true)
+  createdAt   TimestamptzString @default(now())
+  updatedAt   temporal.updatedAtString()
+
+  property     Property @relation(fields: [propertyId], references: [id])
+  rooms        Room[]
+  reservations Reservation[]
+
+  @@unique([propertyId, code])
+}
+
+model Room {
+  id          Int        @id @default(autoincrement())
+  propertyId  Int
+  roomTypeId  Int
+  roomNumber  String
+  floor       String?
+  status      RoomStatus @default(AVAILABLE)
+  isActive    Boolean    @default(true)
+  createdAt   TimestamptzString @default(now())
+  updatedAt   temporal.updatedAtString()
+
+  property     Property @relation(fields: [propertyId], references: [id])
+  roomType     RoomType @relation(fields: [roomTypeId], references: [id])
+  reservations Reservation[]
+
+  @@unique([propertyId, roomNumber])
+}
+
+model Guest {
+  id          Int      @id @default(autoincrement())
+  propertyId  Int
+  firstName   String
+  lastName    String?
+  email       String?
+  mobile      String
+  nationality String?
+  idType      GuestIdType?
+  idNumber    String?
+  address     String?
+  city        String?
+  state       String?
+  country     String?
+  dateOfBirth DateTime?
+  createdAt   TimestamptzString @default(now())
+  updatedAt   temporal.updatedAtString()
+
+  property        Property @relation(fields: [propertyId], references: [id])
+  reservations    Reservation[]
+  serviceRequests ServiceRequest[]
+  callLogs        CallLog[]
+
+  @@index([propertyId, mobile])
+}
+
+model Reservation {
+  id              Int      @id @default(autoincrement())
+  propertyId      Int
+  guestId         Int
+  roomId          Int
+  roomTypeId      Int
+  createdById     Int
+  reservationCode String   @unique
+
+  status        ReservationStatus @default(CONFIRMED)
+  bookingSource BookingSource     @default(DIRECT)
+
+  checkInDate  DateTime
+  checkOutDate DateTime
+  adults       Int @default(1)
+  children     Int @default(0)
+
+  roomRate    String
+  totalAmount String @default(0)
+  amountPaid  String @default(0)
+  balanceDue  String @default(0)
+
+  specialRequests String?
+  notes           String?
+
+  createdAt TimestamptzString @default(now())
+  updatedAt temporal.updatedAtString()
+
+  property     Property @relation(fields: [propertyId], references: [id])
+  guest        Guest @relation(fields: [guestId], references: [id])
+  room         Room @relation(fields: [roomId], references: [id])
+  roomType     RoomType @relation(fields: [roomTypeId], references: [id])
+  createdBy    User @relation("ReservationCreatedBy", fields: [createdById], references: [id])
+
+  payments       Payment[]
+  serviceRequests ServiceRequest[]
+  callLogs        CallLog[]
+
+  @@index([propertyId, status])
+  @@index([guestId])
+  @@index([roomId, checkInDate, checkOutDate])
+}
+
+model Payment {
+  id            Int      @id @default(autoincrement())
+  propertyId    Int
+  reservationId Int
+
+  amount          String
+  method          PaymentMethod
+  status          PaymentStatus @default(PENDING)
+  referenceNumber String?
+  paidAt          DateTime?
+  notes           String?
+
+  createdAt TimestamptzString @default(now())
+  updatedAt temporal.updatedAtString()
+
+  property    Property @relation(fields: [propertyId], references: [id])
+  reservation Reservation @relation(fields: [reservationId], references: [id])
+
+  @@index([reservationId])
+}
+
+model ServiceRequest {
+  id            Int      @id @default(autoincrement())
+  propertyId    Int
+  guestId       Int
+  reservationId Int?
+  roomId        Int?
+  assignedToId  Int?
+
+  type     ServiceRequestType
+  priority RequestPriority      @default(NORMAL)
+  status   ServiceRequestStatus @default(OPEN)
+
+  title          String
+  description    String?
+  resolutionNote String?
+
+  createdAt  TimestamptzString @default(now())
+  updatedAt  temporal.updatedAtString()
+  resolvedAt DateTime?
+
+  property    Property @relation(fields: [propertyId], references: [id])
+  guest       Guest @relation(fields: [guestId], references: [id])
+  reservation Reservation? @relation(fields: [reservationId], references: [id])
+  room        Room? @relation(fields: [roomId], references: [id])
+  assignedTo  User? @relation("ServiceRequestAssignee", fields: [assignedToId], references: [id])
+
+  @@index([propertyId, status])
+  @@index([guestId])
+}
+
+model CallLog {
+  id            Int      @id @default(autoincrement())
+  propertyId    Int
+  guestId       Int?
+  reservationId Int?
+  handledById   Int?
+
+  telecmiCallId  String?
+  telecmiAgentId String?
+  telecmiConversationId String?
+  telecmiCallLeg        String?
+  recordingFilename     String?
+  recordingAvailable    Boolean @default(false)
+  hangupReason          String?
+  fromNumber            String?
+  toNumber              String?
+  telecmiCdr            String?
+  phoneNumber    String
+
+  direction       CallDirection
+  status          CallStatus
+  startedAt       DateTime
+  endedAt         DateTime?
+  durationSeconds Int @default(0)
+
+  notes String?
+
+  createdAt TimestamptzString @default(now())
+  updatedAt temporal.updatedAtString()
+
+  property     Property @relation(fields: [propertyId], references: [id])
+  guest        Guest? @relation(fields: [guestId], references: [id])
+  reservation  Reservation? @relation(fields: [reservationId], references: [id])
+  handledBy    User? @relation("CallHandledBy", fields: [handledById], references: [id])
+
+  @@index([propertyId, startedAt])
+  @@index([guestId])
+  @@index([telecmiAgentId])
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  FRONT_DESK
+  RESERVATIONS
+  HOUSEKEEPING
+  SERVICE
+}
+
+enum RoomStatus {
+  AVAILABLE
+  OCCUPIED
+  DIRTY
+  CLEANING
+  MAINTENANCE
+  OUT_OF_ORDER
+}
+
+enum GuestIdType {
+  PASSPORT
+  AADHAAR
+  DRIVING_LICENSE
+  VOTER_ID
+  OTHER
+}
+
+enum ReservationStatus {
+  INQUIRY
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+enum BookingSource {
+  DIRECT
+  WEBSITE
+  PHONE
+  WALK_IN
+  OTA
+  TRAVEL_AGENT
+  CORPORATE
+  OTHER
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  BANK_TRANSFER
+  ONLINE
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  PARTIAL
+  FAILED
+  REFUNDED
+}
+
+enum ServiceRequestType {
+  HOUSEKEEPING
+  ROOM_SERVICE
+  MAINTENANCE
+  FRONT_DESK
+  OTHER
+}
+
+enum RequestPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ServiceRequestStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  RINGING
+  CONNECTED
+  COMPLETED
+  MISSED
+  FAILED
+  BUSY
+  REJECTED
+}

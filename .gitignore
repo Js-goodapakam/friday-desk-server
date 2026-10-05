@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+# Environment secrets
+.env
+.env.*
+!.env.example
+server/.env
+.vercel
+
+.agents/
+.claude/
+.cursor/
+.devin/
