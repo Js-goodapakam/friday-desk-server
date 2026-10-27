@@ -1,0 +1,12 @@
+if(!process.argv.includes('--local')||process.env.NODE_ENV==='production')throw Error('Use --local outside production.');
+process.env.FRIDAY_LOCAL_DEV='1';
+const db=require('../src/local-db'),store=require('../src/demo-store'),model=require('../src/demo-data');
+async function main(){const rows=(await db.query('SELECT property_id FROM friday_demo_workspace WHERE seed=$1',[model.SEED])).rows;let updated=0;
+ for(const {property_id:id}of rows){const current=await store.read(db,id),s=current.state;if(s.businessRecordsVersion===1)continue;
+ s.enquiries=s.enquiries||[];s.groups=s.groups||[];
+ for(let n=0;n<7;n++){const r=s.reservations[n],status=['New Enquiry','Contacted','Qualified','Quote Sent','Follow-up','Converted','Lost'][n];s.enquiries.push({id:`TAJ-${id}-ENQ-${n+1}`,guestId:r.guestId,arrival:model.day(12+n),departure:model.day(15+n),rooms:1,expectedValue:r.rate*3,source:n%2?'Direct':'Corporate',assignedTo:s.users.find(u=>u.role==='RESERVATIONS')?.name||'Reservations team',followUp:model.day(n%3),status,notes:'Sample data: fictional stay enquiry.',...(status==='Converted'?{reservationId:r.id}:{}),...(status==='Lost'?{lostReason:'Sample data: travel dates changed.'}:{}),createdAt:`${model.START}T06:00:00Z`});}
+ const children=s.reservations.filter(r=>r.status==='Confirmed').slice(0,3);if(children.length){const group={id:`TAJ-${id}-GROUP-1`,name:'Sample data: leadership retreat',organizer:'Sample company organizer',arrival:children.map(r=>r.arrival).sort()[0],departure:children.map(r=>r.departure).sort().at(-1),deposit:0,cutoff:model.START,status:'Confirmed',reservationIds:children.map(r=>r.id),notes:'Fictional group linked to existing individual bookings.'};s.groups.push(group);for(const r of children)r.groupId=group.id;}
+ if(!s.communications.length)for(let n=0;n<3;n++)s.communications.push({id:`TAJ-${id}-COM-${n+1}`,guestId:s.guests[n].id,channel:n?'Internal note':'Email',subject:n?'Sample data: arrival preference':'Sample data: arrival confirmation draft',body:'Fictional guest interaction. No message has been sent.',status:n?'Recorded':'Draft',createdAt:`${model.START}T07:00:00Z`});
+ s.businessRecordsVersion=1;await store.save(db,id,s,current.version,1);updated++;
+ }console.log(JSON.stringify({propertiesUpdated:updated,addedPerProperty:{enquiries:7,groups:1,communications:3},externalMessagesSent:0}));
+}main().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>db.closeDatabase());

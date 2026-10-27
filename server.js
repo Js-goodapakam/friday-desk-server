@@ -15,10 +15,37 @@ const CLIENT_ORIGIN =
 app.use(
   cors({
     origin: CLIENT_ORIGIN,
+    credentials: true,
   })
 );
 
-app.use(express.json());
+app.use(express.json({limit:process.env.FRIDAY_LOCAL_DEV==='1'?'12mb':'256kb'}));
+const auth = require("./src/auth").createAuth(db);
+const properties = require("./src/properties").propertyRoutes(db);
+app.use("/api/auth",auth.checkOrigin);
+app.post("/api/auth/login",auth.login);
+app.get("/api/auth/session",auth.requireSession,(req,res)=>res.json({user:req.user}));
+app.post("/api/auth/logout",auth.logout);
+app.use("/api",(req,res,next)=>{
+ if(req.path==="/health")return next();
+ if(req.path.startsWith("/webhooks/")){
+  if(!process.env.TELECMI_WEBHOOK_TOKEN || req.headers["x-webhook-token"]!==process.env.TELECMI_WEBHOOK_TOKEN)return res.status(401).json({error:"Webhook authentication required."});
+  return next();
+ }
+ auth.requireSession(req,res,()=>auth.checkOrigin(req,res,()=>properties.scope(req,res,next)));
+});
+app.get('/api/properties',properties.list);
+app.get('/api/properties/:id',properties.select);
+app.post('/api/properties',properties.create);
+const owner=require('./src/owner-routes').ownerRoutes(db);
+app.get('/api/owner',owner.get);
+app.put('/api/owner',owner.save);
+app.post('/api/owner/staff',owner.staff);
+const demoRoutes=require('./src/demo-routes').routes(db);
+app.get('/api/properties/:id/workspace',demoRoutes.get);
+app.put('/api/properties/:id/workspace',demoRoutes.put);
+app.post('/api/properties/:id/mock-sync',demoRoutes.simulate);
+app.get('/api/properties/:id/activity',demoRoutes.audit);
 app.get("/api/call-logs/:id/recording", async (req, res) => {
   try {
     const callLogId = Number(req.params.id);
@@ -36,9 +63,9 @@ app.get("/api/call-logs/:id/recording", async (req, res) => {
         "recordingFilename",
         "recordingAvailable"
        FROM "callLog"
-       WHERE "id" = $1
+       WHERE "id" = $1 AND "propertyId" = $2
        LIMIT 1`,
-      [callLogId]
+      [callLogId, req.user.propertyId]
     );
 
     if (result.rows.length === 0) {
@@ -102,10 +129,7 @@ if (contentType.includes("application/json")) {
     error: "Recording file was not found in TeleCMI"
   });
 }
-    const contentType =
-      response.headers.get("content-type") || "audio/mpeg";
-
-    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Type", contentType || "audio/mpeg");
     res.setHeader("Content-Disposition", "inline");
 
     if (response.headers.get("content-length")) {
@@ -482,8 +506,8 @@ app.get("/api/property", async (req, res) => {
     const result = await db.query(
       `SELECT *
        FROM "property"
-       ORDER BY "id"
-       LIMIT 1`
+       WHERE "id" = $1
+       LIMIT 1`, [req.user.propertyId]
     );
 
     res.json({
@@ -502,7 +526,8 @@ app.get("/api/property", async (req, res) => {
 
 app.get("/api/users", async (req, res) => {
   try {
-    const propertyId = Number(req.query.propertyId || 1);
+    if(!["ADMIN","MANAGER"].includes(req.user.role))return res.status(403).json({error:"Permission denied."});
+    const propertyId = req.user.propertyId;
 
     const result = await db.query(
       `SELECT *
@@ -537,7 +562,8 @@ app.post("/api/users", async (req, res) => {
       });
     }
 
-    const finalPropertyId = Number(propertyId || 1);
+    if(req.user.role!=="ADMIN")return res.status(403).json({error:"Administrator access required."});
+    const finalPropertyId = req.user.propertyId;
 
     const property = await db.query(
       `SELECT "id"
