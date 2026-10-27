@@ -13,6 +13,13 @@ test('forged or missing sessions fail closed',async()=>{const auth=fixture();for
 test('database failures do not authenticate users',async()=>{const auth=createAuth({query(){throw Error('offline');}});const res=response();await auth.login({body:{email:user.email,password},ip:'test'},res);assert.equal(res.statusCode,503);assert.equal(res.headers['Set-Cookie'],undefined);});
 test('login limits repeated incorrect attempts',async()=>{const auth=fixture();for(let n=0;n<5;n++)await auth.login({body:{email:user.email,password:'wrong'},ip:'test'},response());const res=response();await auth.login({body:{email:user.email,password},ip:'test'},res);assert.equal(res.statusCode,429);});
 test('cross-origin mutations are denied',()=>{const auth=fixture(),res=response();auth.checkOrigin({headers:{origin:'https://untrusted.example'}},res,()=>assert.fail('untrusted origin accepted'));assert.equal(res.statusCode,403);});
+test('database diagnostics contain only safe codes and never exception secrets',async(t)=>{
+ const logs=[];t.mock.method(console,'error',value=>logs.push(value));
+ const auth=createAuth({query(){throw Object.assign(new Error('postgresql://private-password@host/database'),{code:'42P01'});}});
+ const res=response();await auth.login({body:{email:user.email,password},ip:'diagnostic-test'},res);
+ assert.equal(res.statusCode,503);assert.deepEqual(JSON.parse(logs[0]),{event:'friday_auth_unavailable',operation:'login',code:'42P01',reason:'missing_table'});
+ assert.ok(!JSON.stringify(res.body).includes('private-password'));assert.ok(!logs.join('').includes('private-password'));
+});
 test('isolated local mode accepts both loopback addresses on 5174 only outside secure mode',()=>{
  const previous=process.env.FRIDAY_LOCAL_DEV;process.env.FRIDAY_LOCAL_DEV='1';
  try{for(const secure of [false,true])for(const origin of ['http://localhost:5174','http://127.0.0.1:5174','http://untrusted.example:5174']){

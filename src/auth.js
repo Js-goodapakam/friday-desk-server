@@ -22,7 +22,14 @@ function createAuth(db, options = {}) {
   const dummy = hashPassword(randomBytes(32).toString('hex'));
   const cookie = (res, token, seconds) => res.setHeader('Set-Cookie', `friday_session=${token}; Path=/api; HttpOnly; SameSite=Lax; Max-Age=${seconds}${secure ? '; Secure' : ''}`);
   const safeUser = row => ({id:row.id,name:row.name,email:row.email,role:row.role,propertyId:row.propertyId});
-  const unavailable = res => res.status(503).json({error:'Authentication is unavailable. Ask your administrator to configure the server and provision your account.'});
+  const unavailable = (res,error,operation) => {
+    const rawCode=typeof error?.code==='string'?error.code:'';
+    const code=/^[A-Z0-9_]{2,32}$/.test(rawCode)?rawCode:'UNKNOWN';
+    const reason=code==='42P01'?'missing_table':code==='42703'?'missing_column':code==='28P01'?'database_credentials':code==='3D000'?'database_not_found':['ECONNREFUSED','ENOTFOUND','ETIMEDOUT','EHOSTUNREACH'].includes(code)?'database_connection':'database_operation';
+    // Never log exception messages, SQL, connection strings, credentials or request bodies.
+    console.error(JSON.stringify({event:'friday_auth_unavailable',operation,code,reason}));
+    return res.status(503).json({error:'Authentication is unavailable. Ask your administrator to configure the server and provision your account.'});
+  };
   const checkOrigin = (req,res,next) => {
     const localOrigin = !secure && ['http://localhost:5173','http://127.0.0.1:5173',...(process.env.FRIDAY_LOCAL_DEV === '1' ? ['http://localhost:5174','http://127.0.0.1:5174'] : [])].includes(req.headers.origin);
     if (req.headers.origin && req.headers.origin !== origin && !localOrigin) return res.status(403).json({error:'Request origin is not allowed.'});
@@ -51,7 +58,7 @@ function createAuth(db, options = {}) {
       await db.query('INSERT INTO friday_sessions (token_hash,user_id,expires_at) VALUES ($1,$2,$3)',[digest(token),user.id,new Date(now+seconds*1000)]);
       cookie(res,token,seconds);
       res.json({user:safeUser(user)});
-    } catch { unavailable(res); }
+    } catch(error) { unavailable(res,error,'login'); }
   };
   const requireSession = async (req,res,next) => {
     res.setHeader('Cache-Control','no-store');
@@ -61,11 +68,11 @@ function createAuth(db, options = {}) {
       const result=await db.query('SELECT u.* FROM friday_sessions s JOIN "user" u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u."isActive"=true',[digest(token)]);
       if (!result.rows[0]) return res.status(401).json({error:'Your session has expired. Sign in again.'});
       req.user=safeUser(result.rows[0]); next();
-    } catch { unavailable(res); }
+    } catch(error) { unavailable(res,error,'session'); }
   };
   const logout = async (req,res) => {
     try { await db.query('DELETE FROM friday_sessions WHERE token_hash=$1',[digest(cookieToken(req))]); cookie(res,'',0); res.json({success:true}); }
-    catch { unavailable(res); }
+    catch(error) { unavailable(res,error,'logout'); }
   };
   return {login,requireSession,logout,checkOrigin};
 }
