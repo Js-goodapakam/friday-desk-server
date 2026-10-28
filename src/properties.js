@@ -19,7 +19,7 @@ function propertyRoutes(db) {
         catch(error){if(error.code!=='42P01')throw error;}
         let properties=[...new Map([...primary.rows,...additional].map(p=>[p.id,p])).values()];
         if(process.env.FRIDAY_LOCAL_DEV==='1')properties=properties.filter(p=>require('./demo-data').hotels.some(h=>h[0]===p.code));
-        if(process.env.FRIDAY_LOCAL_DEV==="1"){for(const p of properties){const found=await require("./demo-store").read(db,p.id).catch(()=>null);if(found)Object.assign(p,require("./demo-store").stats(found.state));}}
+        for(const p of properties){const found=await require("./demo-store").read(db,p.id).catch(()=>null);if(found)Object.assign(p,require("./demo-store").stats(found.state));}
         res.json({properties});
       }catch{res.status(503).json({error:'Unable to load your properties. Please try again.'});}
     },
@@ -30,7 +30,7 @@ function propertyRoutes(db) {
         if(!await canAccess(db,{...req.user,propertyId:req.user.homePropertyId || req.user.propertyId},id))return res.status(403).json({error:'You do not have access to this property.'});
         const result=await db.query('SELECT * FROM "property" WHERE id=$1',[id]);
         if(!result.rows[0])return res.status(404).json({error:'Property not found.'});
-        const property=result.rows[0];if(process.env.FRIDAY_LOCAL_DEV==="1"){const found=await require("./demo-store").read(db,id).catch(()=>null);if(found)Object.assign(property,require("./demo-store").stats(found.state));}
+        const property=result.rows[0];const found=await require("./demo-store").read(db,id).catch(()=>null);if(found)Object.assign(property,require("./demo-store").stats(found.state));
         res.json({property});
       }catch{res.status(503).json({error:'Unable to open this property.'});}
     },

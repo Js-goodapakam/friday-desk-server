@@ -2,9 +2,9 @@ const {hashPassword}=require('./auth');
 const {canAccess}=require('./properties');
 const roles=['ADMIN','MANAGER','FRONT_DESK','HOUSEKEEPING','REVENUE','FINANCE','RESERVATIONS'];
 function ownerRoutes(db){
- async function allowed(req,res){if(process.env.FRIDAY_LOCAL_DEV!=='1'||!db.file){res.status(503).json({error:'Owner administration storage requires deployment configuration.'});return false;}if(!['ADMIN','MANAGER'].includes(req.user.role)){res.status(403).json({error:'Owner or manager access required.'});return false;}return true;}
+ async function allowed(req,res){if(process.env.FRIDAY_LOCAL_DEV!=='1'&&(db.file||process.env.NODE_ENV!=='production')){res.status(503).json({error:'Owner administration storage requires deployment configuration.'});return false;}if(!['ADMIN','MANAGER'].includes(req.user.role)){res.status(403).json({error:'Owner or manager access required.'});return false;}return true;}
  async function schema(){await db.query('CREATE TABLE IF NOT EXISTS friday_owner_settings(user_id INTEGER PRIMARY KEY REFERENCES user(id),payload TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1)');}
- async function properties(req){const rows=(await db.query('SELECT * FROM property')).rows;const result=[];for(const p of rows)if(require('./demo-data').hotels.some(h=>h[0]===p.code)&&await canAccess(db,{...req.user,propertyId:req.user.homePropertyId||req.user.propertyId},p.id))result.push(p);return result;}
+ async function properties(req){const rows=(await db.query('SELECT * FROM property')).rows;const result=[];for(const p of rows)if(require('./demo-data').hotels.some(h=>h[0]===p.code)&&await canAccess(db,{...req.user,propertyId:req.user.homePropertyId||req.user.propertyId},p.id)){const saved=await require('./demo-store').read(db,p.id).catch(()=>null);if(saved)Object.assign(p,require('./demo-store').stats(saved.state));result.push(p);}return result;}
  async function get(req,res){try{if(!await allowed(req,res))return;await schema();const props=await properties(req),ids=new Set(props.map(p=>p.id));
   const all=(await db.query('SELECT id,propertyId,name,email,phone,role,isActive FROM user ORDER BY name')).rows;
   const users=require('./sample-labels').normalizeLabels(all.filter(u=>ids.has(u.propertyId)||u.id===req.user.id));

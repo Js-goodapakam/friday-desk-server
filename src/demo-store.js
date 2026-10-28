@@ -1,5 +1,11 @@
 const model=require('./demo-data');
-function assertLocal(db){if(process.env.FRIDAY_LOCAL_DEV!=='1'||process.env.NODE_ENV==='production'||!db.file?.endsWith('friday-development.sqlite'))throw Error('Demo data is restricted to the isolated local SQLite database.');}
+function assertLocal(db){if(process.env.FRIDAY_LOCAL_DEV!=='1'||process.env.NODE_ENV==='production'||!db.file?.endsWith('friday-development.sqlite'))throw Error('Sample data is restricted to the isolated local SQLite database.');}
+async function assertWritableWorkspace(db,id){
+ if(process.env.FRIDAY_LOCAL_DEV==='1'){assertLocal(db);return;}
+ if(db.file||process.env.NODE_ENV!=='production')throw Error('Production sample workspace writes require the production database and runtime.');
+ const found=await db.query('SELECT p.code,w.seed FROM property p JOIN friday_demo_workspace w ON w.property_id=p.id WHERE p.id=$1',[id]);
+ if(!found.rows[0]||found.rows[0].seed!==model.SEED||!model.hotels.some(h=>h[0]===found.rows[0].code))throw Error('Only explicitly seeded Taj sample workspaces may be changed.');
+}
 async function schema(db){assertLocal(db);for(const sql of [
  'CREATE TABLE IF NOT EXISTS friday_demo_workspace(property_id INTEGER PRIMARY KEY REFERENCES property(id),seed TEXT NOT NULL,state_json TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1)',
  'CREATE TABLE IF NOT EXISTS friday_demo_room_type(property_id INTEGER REFERENCES property(id),id TEXT,payload TEXT NOT NULL,PRIMARY KEY(property_id,id))',
@@ -49,7 +55,7 @@ async function project(client,id,state){
  for(const [kind,rows]of [['channels',state.channelManager.channels],['syncEvents',state.channelManager.syncEvents]])for(const row of rows)await client.query('INSERT INTO friday_demo_record VALUES($1,$2,$3,NULL,$4)',[id,kind,row.id,JSON.stringify(row)]);
 }
 async function read(db,id){const found=await db.query('SELECT state_json,version FROM friday_demo_workspace WHERE property_id=$1',[id]);if(!found.rows[0])return null;return{state:require('./sample-labels').normalizeLabels(JSON.parse(found.rows[0].state_json)),version:found.rows[0].version};}
-async function save(db,id,state,version,actor){assertLocal(db);validate(state);return db.withTransaction(async client=>{
+async function save(db,id,state,version,actor){await assertWritableWorkspace(db,id);validate(state);return db.withTransaction(async client=>{
  const current=(await client.query('SELECT version,state_json FROM friday_demo_workspace WHERE property_id=$1',[id])).rows[0];
  if(!current||current.version!==version){const error=Error('This workspace changed. Reload before saving again.');error.status=409;throw error;}
  state.property.id=id;state.demo={seed:model.SEED,referenceDate:model.START,disclaimer:'SAMPLE DATA — NOT AFFILIATED WITH TAJ. Operational records are fictional.'};
@@ -66,4 +72,4 @@ function stats(state){
   openRequests:state.requests.filter(r=>r.status==='Open').length,
  };
 }
-module.exports={schema,assertLocal,validate,project,read,save,stats};
+module.exports={schema,assertLocal,assertWritableWorkspace,validate,project,read,save,stats};

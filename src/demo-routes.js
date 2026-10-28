@@ -2,9 +2,15 @@ const {randomUUID}=require('node:crypto');
 const store=require('./demo-store'),model=require('./demo-data'),{canAccess}=require('./properties');
 function routes(db){
  async function eligible(req,res){
-  if(process.env.FRIDAY_LOCAL_DEV!=='1'||!db.file)return res.status(404).json({error:'Sample data workspaces are available only in isolated local development.'}),null;
   const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Invalid property.'}),null;
+  if(process.env.FRIDAY_LOCAL_DEV!=='1'&&(db.file||process.env.NODE_ENV!=='production'))return res.status(404).json({error:'Sample data workspaces are unavailable.'}),null;
   if(!await canAccess(db,{...req.user,propertyId:req.user.homePropertyId||req.user.propertyId},id))return res.status(403).json({error:'Property access denied.'}),null;
+  const property=(await db.query('SELECT code FROM property WHERE id=$1',[id])).rows[0];
+  if(!property||!model.hotels.some(h=>h[0]===property.code))return res.status(404).json({error:'Property workspace not found.'}),null;
+  if(process.env.FRIDAY_LOCAL_DEV!=='1'){
+   const workspace=await store.read(db,id);
+   if(workspace?.state?.demo?.seed!==model.SEED)return res.status(404).json({error:'No seeded sample workspace exists for this property.'}),null;
+  }
   return id;
  }
  async function get(req,res){try{const id=await eligible(req,res);if(!id)return;const result=await store.read(db,id);res.json(result||{state:null,version:0});}catch(error){res.status(503).json({error:'Unable to load database-backed workspace.'});}}

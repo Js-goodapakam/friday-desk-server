@@ -10,6 +10,7 @@
     "test": "node --test src/auth.test.js src/properties.test.js src/demo-data.test.js src/business-rules.test.js src/owner-routes.test.js",
     "demo:seed": "node scripts/seed-demo.js --local",
     "demo:validate": "node scripts/seed-demo.js --local --validate-only",
+    "demo:seed:production": "node scripts/seed-production-sample.js",
     "demo:photos": "node scripts/demo-photos.js --local",
     "auth:migrate": "node scripts/migrate-auth.js",
     "auth:set-password": "node scripts/set-password.js",
