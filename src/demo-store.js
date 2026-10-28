@@ -47,12 +47,24 @@ function validate(state){
 }
 async function project(client,id,state){
  for(const table of ['friday_demo_record','friday_demo_reservation','friday_demo_room','friday_demo_guest','friday_demo_room_type'])await client.query(`DELETE FROM ${table} WHERE property_id=$1`,[id]);
- for(const row of state.roomTypes)await client.query('INSERT INTO friday_demo_room_type VALUES($1,$2,$3)',[id,row.id,JSON.stringify(row)]);
- for(const row of state.rooms)await client.query('INSERT INTO friday_demo_room VALUES($1,$2,$3,$4)',[id,row.number,row.roomTypeId,JSON.stringify(row)]);
- for(const row of state.guests)await client.query('INSERT INTO friday_demo_guest VALUES($1,$2,$3)',[id,row.id,JSON.stringify(row)]);
- for(const row of state.reservations)await client.query('INSERT INTO friday_demo_reservation VALUES($1,$2,$3,$4,$5)',[id,row.id,row.guestId,row.room,JSON.stringify(row)]);
- for(const kind of ['ratePlans','folios','payments','invoices','dailyInventory','housekeeping','requests','tasks','enquiries','groups','roomBlocks','roomChanges','communications'])for(const row of state[kind]||[])await client.query('INSERT INTO friday_demo_record VALUES($1,$2,$3,$4,$5)',[id,kind,row.id,row.reservationId||null,JSON.stringify(row)]);
- for(const [kind,rows]of [['channels',state.channelManager.channels],['syncEvents',state.channelManager.syncEvents]])for(const row of rows)await client.query('INSERT INTO friday_demo_record VALUES($1,$2,$3,NULL,$4)',[id,kind,row.id,JSON.stringify(row)]);
+ const insertMany=async(table,columns,rows,valuesOf)=>{
+  for(let offset=0;offset<rows.length;offset+=250){
+   const chunk=rows.slice(offset,offset+250),values=[],tuples=chunk.map((row,index)=>{
+    const rowValues=valuesOf(row),base=index*columns.length;
+    values.push(...rowValues);
+    return`(${rowValues.map((_,column)=>`$${base+column+1}`).join(',')})`;
+   });
+   await client.query(`INSERT INTO ${table} (${columns.join(',')}) VALUES ${tuples.join(',')}`,values);
+  }
+ };
+ await insertMany('friday_demo_room_type',['property_id','id','payload'],state.roomTypes,row=>[id,row.id,JSON.stringify(row)]);
+ await insertMany('friday_demo_room',['property_id','number','room_type_id','payload'],state.rooms,row=>[id,row.number,row.roomTypeId,JSON.stringify(row)]);
+ await insertMany('friday_demo_guest',['property_id','id','payload'],state.guests,row=>[id,row.id,JSON.stringify(row)]);
+ await insertMany('friday_demo_reservation',['property_id','id','guest_id','room_number','payload'],state.reservations,row=>[id,row.id,row.guestId,row.room,JSON.stringify(row)]);
+ const records=[];
+ for(const kind of ['ratePlans','folios','payments','invoices','dailyInventory','housekeeping','requests','tasks','enquiries','groups','roomBlocks','roomChanges','communications'])for(const row of state[kind]||[])records.push({kind,row});
+ for(const [kind,rows]of [['channels',state.channelManager.channels],['syncEvents',state.channelManager.syncEvents]])for(const row of rows)records.push({kind,row});
+ await insertMany('friday_demo_record',['property_id','kind','id','reservation_id','payload'],records,({kind,row})=>[id,kind,row.id,row.reservationId||null,JSON.stringify(row)]);
 }
 async function read(db,id){const found=await db.query('SELECT state_json,version FROM friday_demo_workspace WHERE property_id=$1',[id]);if(!found.rows[0])return null;return{state:require('./sample-labels').normalizeLabels(JSON.parse(found.rows[0].state_json)),version:found.rows[0].version};}
 async function save(db,id,state,version,actor){await assertWritableWorkspace(db,id);validate(state);return db.withTransaction(async client=>{

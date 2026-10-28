@@ -22,6 +22,21 @@ app.use(
 app.use(express.json({limit:process.env.FRIDAY_LOCAL_DEV==='1'?'12mb':'256kb'}));
 const auth = require("./src/auth").createAuth(db);
 const properties = require("./src/properties").propertyRoutes(db);
+app.post('/api/internal/seed-sample',async(req,res)=>{
+ const expectedToken=process.env.FRIDAY_TEMP_SEED_TOKEN;
+ const suppliedToken=req.get('x-friday-seed-token')||'';
+ const crypto=require('node:crypto');
+ const matches=expectedToken&&Buffer.byteLength(expectedToken)===Buffer.byteLength(suppliedToken)&&crypto.timingSafeEqual(Buffer.from(expectedToken),Buffer.from(suppliedToken));
+ if(!matches)return res.status(404).json({error:'Not found.'});
+ try{
+  const {runProductionSeed}=require('./scripts/seed-production-sample');
+  const result=await runProductionSeed({pool:db.pool,expectedRef:'aoqkveavzprjgaaxzwdf',confirmedRef:'aoqkveavzprjgaaxzwdf',adminEmail:'info@friday.com'});
+  return res.json(result);
+ }catch(error){
+  console.error('Approved sample seed failed:',error.message);
+  return res.status(500).json({error:error.message});
+ }
+});
 app.use("/api/auth",auth.checkOrigin);
 app.post("/api/auth/login",auth.login);
 app.get("/api/auth/session",auth.requireSession,(req,res)=>res.json({user:req.user}));

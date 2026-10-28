@@ -16,12 +16,12 @@ function connectionProjectRef(url){
 function connectionString(){
  return process.env.FRIDAY_PRODUCTION_DATABASE_URL||process.env.POSTGRES_URL_NON_POOLING||process.env.POSTGRES_URL||process.env.DATABASE_URL;
 }
-function requireTarget(){
+function requireTarget({expectedRef,confirmedRef}={}){
  const url=connectionString();
  if(!url)throw Error('Set FRIDAY_PRODUCTION_DATABASE_URL or a Vercel/Supabase Postgres URL.');
  const projectRef=connectionProjectRef(url);
- const expected=process.env.FRIDAY_EXPECTED_SUPABASE_REF;
- const confirmed=process.argv.find(a=>a.startsWith('--confirm-production-seed='))?.split('=')[1];
+ const expected=expectedRef||process.env.FRIDAY_EXPECTED_SUPABASE_REF;
+ const confirmed=confirmedRef||process.argv.find(a=>a.startsWith('--confirm-production-seed='))?.split('=')[1];
  if(!expected||!projectRef||projectRef!==expected||confirmed!==expected)throw Error('Refusing production seed: connection project reference, FRIDAY_EXPECTED_SUPABASE_REF, and --confirm-production-seed must all match.');
  if(process.env.NODE_ENV!=='production')throw Error('Set NODE_ENV=production explicitly for the approved production run.');
  return{url,projectRef};
@@ -33,8 +33,8 @@ async function ensureMigration(pool){
  const missing=required.filter(name=>!found.has(name));
  if(missing.length)throw Error(`Apply sql/sample-workspaces.sql first; missing: ${missing.join(', ')}`);
 }
-async function seed(pool){
- const adminResult=await pool.query('SELECT id, "propertyId" FROM "user" WHERE lower(email)=lower($1) AND role=$2 AND "isActive"=TRUE',[process.env.FRIDAY_SEED_ADMIN_EMAIL||'info@friday.com','ADMIN']);
+async function seed(pool,adminEmail){
+ const adminResult=await pool.query('SELECT id, "propertyId" FROM "user" WHERE lower(email)=lower($1) AND role=$2 AND "isActive"=TRUE',[adminEmail||process.env.FRIDAY_SEED_ADMIN_EMAIL||'info@friday.com','ADMIN']);
  if(adminResult.rowCount!==1)throw Error('Expected exactly one active Friday ADMIN account matching FRIDAY_SEED_ADMIN_EMAIL.');
  const admin=adminResult.rows[0];
  const rows=[];
@@ -90,19 +90,27 @@ async function verify(pool){
  for(const[key,value]of Object.entries(expected))if(sums[key]!==value)throw Error(`Verification failed for ${key}: expected ${value}, found ${sums[key]}.`);
  return{sums,properties:result.rows.map(row=>({code:row.code,seed:row.seed}))};
 }
-(async()=>{
- let pool;
+async function runProductionSeed({pool:providedPool,expectedRef,confirmedRef,adminEmail}={}){
+ let pool=providedPool;
  try{
-  const target=requireTarget();
-  pool=new Pool({connectionString:target.url,ssl:{rejectUnauthorized:false},max:2,connectionTimeoutMillis:10000});
+  const target=requireTarget({expectedRef,confirmedRef});
+  if(!pool)pool=new Pool({connectionString:target.url,ssl:{rejectUnauthorized:false},max:2,connectionTimeoutMillis:10000});
   const client=await pool.connect();
   try{
    await client.query('BEGIN');
+   const migration=fs.readFileSync(path.resolve(__dirname,'../sql/sample-workspaces.sql'),'utf8');
+   await client.query(migration);
    await ensureMigration(client);
-   const seeded=await seed(client);
+   const seeded=await seed(client,adminEmail);
    await client.query('COMMIT');
    const verified=await verify(client);
-   console.log(JSON.stringify({targetProjectRef:target.projectRef,seed:model.SEED,seeded,verified},null,2));
+   return{targetProjectRef:target.projectRef,seed:model.SEED,seeded,verified};
   }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
- }catch(error){console.error(error.message);process.exitCode=1;}finally{await pool?.end();}
-})();
+ }finally{if(!providedPool)await pool?.end();}
+}
+
+if(require.main===module){
+ runProductionSeed().then(result=>console.log(JSON.stringify(result,null,2))).catch(error=>{console.error(error.message);process.exitCode=1;});
+}
+
+module.exports={runProductionSeed,connectionProjectRef};
