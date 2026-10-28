@@ -48,8 +48,8 @@ function validate(state){
 async function project(client,id,state){
  for(const table of ['friday_demo_record','friday_demo_reservation','friday_demo_room','friday_demo_guest','friday_demo_room_type'])await client.query(`DELETE FROM ${table} WHERE property_id=$1`,[id]);
  const insertMany=async(table,columns,rows,valuesOf)=>{
-  for(let offset=0;offset<rows.length;offset+=250){
-   const chunk=rows.slice(offset,offset+250),values=[],tuples=chunk.map((row,index)=>{
+  for(let offset=0;offset<rows.length;offset+=1000){
+   const chunk=rows.slice(offset,offset+1000),values=[],tuples=chunk.map((row,index)=>{
     const rowValues=valuesOf(row),base=index*columns.length;
     values.push(...rowValues);
     return`(${rowValues.map((_,column)=>`$${base+column+1}`).join(',')})`;
