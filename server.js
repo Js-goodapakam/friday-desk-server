@@ -41,6 +41,8 @@ const owner=require('./src/owner-routes').ownerRoutes(db);
 app.get('/api/owner',owner.get);
 app.put('/api/owner',owner.save);
 app.post('/api/owner/staff',owner.staff);
+app.put('/api/owner/staff/:id',owner.editStaff);
+app.delete('/api/owner/staff/:id',owner.deleteStaff);
 const demoRoutes=require('./src/demo-routes').routes(db);
 app.get('/api/properties/:id/workspace',demoRoutes.get);
 app.put('/api/properties/:id/workspace',demoRoutes.put);
