@@ -24,6 +24,7 @@ model Property {
 
 model User {
   id          Int      @id @default(autoincrement())
+  preferred_language String @default("en")
   propertyId  Int
   name        String
   email       String   @unique

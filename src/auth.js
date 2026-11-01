@@ -21,7 +21,7 @@ function createAuth(db, options = {}) {
   const failures = new Map();
   const dummy = hashPassword(randomBytes(32).toString('hex'));
   const cookie = (res, token, seconds) => res.setHeader('Set-Cookie', `friday_session=${token}; Path=/api; HttpOnly; SameSite=Lax; Max-Age=${seconds}${secure ? '; Secure' : ''}`);
-  const safeUser = row => ({id:row.id,name:row.name,email:row.email,role:row.role,propertyId:row.propertyId});
+  const safeUser = row => ({id:row.id,name:row.name,email:row.email,role:row.role,propertyId:row.propertyId,preferred_language:row.preferred_language==='kn'?'kn':'en'});
   const unavailable = (res,error,operation) => {
     const rawCode=typeof error?.code==='string'?error.code:'';
     const code=/^[A-Z0-9_]{2,32}$/.test(rawCode)?rawCode:'UNKNOWN';

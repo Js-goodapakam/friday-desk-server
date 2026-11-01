@@ -1,0 +1,10 @@
+const test=require('node:test'),assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite');
+const {preferenceRoutes}=require('./preferences');
+const response=()=>({code:200,status(c){this.code=c;return this;},setHeader(){},json(body){this.body=body;return this;}});
+test('two users retain independent preferences; default, persistence and constraint',async()=>{
+ const sqlite=new DatabaseSync(':memory:');sqlite.exec("CREATE TABLE user(id INTEGER PRIMARY KEY,preferred_language TEXT NOT NULL DEFAULT 'en' CHECK(preferred_language IN ('en','kn')));INSERT INTO user(id) VALUES(1),(2)");
+ const db={async query(sql,params){const values=[];sql=sql.replace(/\$(\d+)/g,(_,n)=>{values.push(params[n-1]);return '?';});return {rows:sqlite.prepare(sql).all(...values)};}};
+ try{const routes=preferenceRoutes(db);let res=response();await routes.get({user:{id:1}},res);assert.equal(res.body.preferred_language,'en');res=response();await routes.put({user:{id:1},body:{preferred_language:'kn'}},res);assert.equal(res.code,200);assert.equal(res.body.preferred_language,'kn');res=response();await routes.get({user:{id:2}},res);assert.equal(res.body.preferred_language,'en');res=response();await routes.get({user:{id:1}},res);assert.equal(res.body.preferred_language,'kn');assert.throws(()=>sqlite.prepare('UPDATE user SET preferred_language=? WHERE id=1').run('fr'));}finally{sqlite.close();}
+});
+test('browser supplied user IDs and unsupported languages cannot write',async()=>{let writes=0;const routes=preferenceRoutes({query(){writes++;throw Error('unexpected');}});for(const body of [{preferred_language:'fr'},{preferred_language:'kn',userId:2},{preferred_language:'kn',id:2},{}]){const res=response();await routes.put({user:{id:1},body},res);assert.equal(res.code,400);}assert.equal(writes,0);});
+test('database errors do not report successful preference saving',async()=>{const res=response();await preferenceRoutes({query(){throw Error('secret');}}).put({user:{id:1},body:{preferred_language:'kn'}},res);assert.equal(res.code,503);assert.doesNotMatch(JSON.stringify(res.body),/secret/);});

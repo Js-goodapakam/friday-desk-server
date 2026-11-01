@@ -35,6 +35,9 @@ app.use("/api",(req,res,next)=>{
  auth.requireSession(req,res,()=>auth.checkOrigin(req,res,()=>properties.scope(req,res,next)));
 });
 app.get('/api/properties',properties.list);
+const preferences=require('./src/preferences').preferenceRoutes(db);
+app.get('/api/me/preferences',preferences.get);
+app.put('/api/me/preferences',preferences.put);
 app.get('/api/properties/:id',properties.select);
 app.post('/api/properties',properties.create);
 const owner=require('./src/owner-routes').ownerRoutes(db);

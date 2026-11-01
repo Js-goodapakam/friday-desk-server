@@ -49,6 +49,10 @@ if (!database.prepare('SELECT user_id FROM friday_credentials WHERE user_id=1').
   console.log(`Local test account created. Email: ${email} Password: ${password}`);
 }
 database.prepare('DELETE FROM friday_sessions WHERE expires_at < ?').run(new Date().toISOString());
+// Isolated SQLite only; production uses the reviewed forward SQL migration.
+if(!database.prepare('PRAGMA table_info(user)').all().some(c=>c.name==='preferred_language')){
+ database.exec("ALTER TABLE user ADD COLUMN preferred_language TEXT NOT NULL DEFAULT 'en' CHECK(preferred_language IN ('en','kn'))");
+}
 
 async function query(sql, params = []) {
   const values = [];
