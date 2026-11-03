@@ -1,6 +1,6 @@
 const {randomUUID}=require('node:crypto');
 const store=require('./demo-store'),model=require('./demo-data'),{canAccess}=require('./properties');
-function routes(db){
+function routes(db,repository=store){
  async function eligible(req,res){
   const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Invalid property.'}),null;
   if(process.env.FRIDAY_LOCAL_DEV!=='1'&&(db.file||process.env.NODE_ENV!=='production'))return res.status(404).json({error:'Sample data workspaces are unavailable.'}),null;
@@ -8,7 +8,7 @@ function routes(db){
   const property=(await db.query('SELECT code FROM property WHERE id=$1',[id])).rows[0];
   if(!property||!model.hotels.some(h=>h[0]===property.code))return res.status(404).json({error:'Property workspace not found.'}),null;
   if(process.env.FRIDAY_LOCAL_DEV!=='1'){
-   const workspace=await store.read(db,id);
+   const workspace=await repository.read(db,id);
    if(workspace?.state?.demo?.seed!==model.SEED)return res.status(404).json({error:'No seeded sample workspace exists for this property.'}),null;
   }
   return id;
@@ -18,7 +18,7 @@ function routes(db){
   const id=await eligible(req,res);if(!id)return;
   const current=await store.read(db,id);if(!current)return res.status(404).json({error:'No sample workspace exists for this property.'});
   const {state,version}=req.body||{};if(!state||Number(state.property?.id)!==id||state.demo?.seed!==model.SEED)return res.status(400).json({error:'Invalid property workspace.'});
-  const allowed={HOUSEKEEPING:['housekeeping','rooms','requests','tasks'],FINANCE:['payments','folios','invoices','invoiceSettings','reservations'],REVENUE:['inventoryOverrides','inventoryAudit','ratePlans','channelManager'],FRONT_DESK:['guests','reservations','rooms','requests','tasks','communications','roomChanges','enquiries','groups'],RESERVATIONS:['guests','reservations','requests','tasks','communications','enquiries','groups']};
+  const allowed={HOUSEKEEPING:['housekeeping','rooms','requests','tasks'],FINANCE:['payments','folios','invoices','invoiceSettings','reservations'],REVENUE:['inventoryOverrides','inventoryAudit','ratePlans','channelManager','revenueManagement'],FRONT_DESK:['guests','reservations','rooms','requests','tasks','communications','roomChanges','enquiries','groups'],RESERVATIONS:['guests','reservations','requests','tasks','communications','enquiries','groups']};
   if(!['ADMIN','MANAGER'].includes(req.user.role)){
    const keys=allowed[req.user.role];if(!keys)return res.status(403).json({error:'This role cannot edit a property workspace.'});
    for(const key of new Set([...Object.keys(current.state),...Object.keys(state)]))if(!keys.includes(key)&&JSON.stringify(state[key])!==JSON.stringify(current.state[key]))return res.status(403).json({error:'Your role cannot change '+key+'.'});
@@ -63,6 +63,18 @@ function routes(db){
   const result=await store.save(db,id,state,current.version,req.user.id);res.json(result);
  }catch(error){res.status(error.status||400).json({error:error.message});}}
  async function audit(req,res){try{const id=await eligible(req,res);if(!id)return;if(!['ADMIN','MANAGER'].includes(req.user.role))return res.status(403).json({error:'Manager access required.'});const rows=(await db.query('SELECT id,actor_id,action,at,payload FROM friday_demo_audit WHERE property_id=$1 ORDER BY id DESC LIMIT 200',[id])).rows;res.json({records:require('./sample-labels').normalizeLabels(rows)});}catch{res.status(503).json({error:'Unable to load audit history.'});}}
- return{get,put,simulate,audit};
+ async function revenue(req,res){try{
+  const id=await eligible(req,res);if(!id)return;
+  if(!['ADMIN','MANAGER','REVENUE'].includes(req.user.role))return res.status(403).json({error:'Revenue management access required.'});
+  const current=await repository.read(db,id);if(!current)return res.status(404).json({error:'Workspace not found.'});
+  const {action,config,from,to,version}=req.body||{},engine=require('./revenue-engine');
+  if(!['preview','save','apply'].includes(action))return res.status(400).json({error:'Invalid revenue action.'});
+  engine.validateConfig(config,current.state);
+  if(action==='preview')return res.json({rows:engine.preview(current.state,config,from,to),version:current.version});
+  if(!Number.isInteger(version)||version!==current.version)return res.status(409).json({error:'Workspace changed. Refresh and preview again.'});
+  const state=action==='save'?{...current.state,revenueManagement:config}:engine.apply(current.state,config,from,to,req.user.id);
+  res.json(await repository.save(db,id,state,version,req.user.id));
+ }catch(error){res.status(error.status||400).json({error:error.message});}}
+ return{get,put,simulate,audit,revenue};
 }
 module.exports={routes};

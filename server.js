@@ -48,6 +48,7 @@ app.get('/api/properties/:id/workspace',demoRoutes.get);
 app.put('/api/properties/:id/workspace',demoRoutes.put);
 app.post('/api/properties/:id/mock-sync',demoRoutes.simulate);
 app.get('/api/properties/:id/activity',demoRoutes.audit);
+app.post('/api/properties/:id/revenue',demoRoutes.revenue);
 app.get("/api/call-logs/:id/recording", async (req, res) => {
   try {
     const callLogId = Number(req.params.id);

@@ -17,6 +17,8 @@ async function schema(db){assertLocal(db);for(const sql of [
  'CREATE TABLE IF NOT EXISTS friday_demo_audit(id INTEGER PRIMARY KEY,property_id INTEGER REFERENCES property(id),actor_id INTEGER,action TEXT,at TEXT,payload TEXT)'
  ])await db.query(sql);}
 function validate(state){
+ require('./hospitality-rules').validateHospitality(state);
+ if(state.revenueManagement)require('./revenue-engine').validateConfig(state.revenueManagement,state);
  require('./business-rules').validateBusiness(state);
  if(!Number.isFinite(state.invoiceSettings?.taxRate)||state.invoiceSettings.taxRate<0||state.invoiceSettings.taxRate>50)throw Error('Invalid demonstration tax rate');
  const unique=(rows,key)=>{const ids=rows.map(r=>String(r[key]));if(new Set(ids).size!==ids.length)throw Error(`Duplicate ${key}`);};
