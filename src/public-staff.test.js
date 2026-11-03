@@ -1,0 +1,2 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{publicStaff}=require('./staff-profile');
+test('staff display rejects object fields and profile overrides of identity and permissions',()=>{const result=publicStaff({id:1,propertyId:2,name:'Owner',email:'owner@example.test',phone:{},role:'ADMIN',isActive:true},{id:99,role:'REVENUE',phone:'override',voiceAccess:'false',firstName:{}});assert.equal(result.phone,'');assert.equal(result.id,1);assert.equal(result.role,'ADMIN');assert.equal(result.firstName,'');assert.equal(result.voiceAccess,false);});

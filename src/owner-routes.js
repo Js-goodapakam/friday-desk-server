@@ -8,7 +8,7 @@ function ownerRoutes(db){
  async function get(req,res){try{if(!await allowed(req,res))return;if(process.env.FRIDAY_LOCAL_DEV==='1')await schema();const props=await properties(req),ids=new Set(props.map(p=>p.id));
   const all=(await db.query('SELECT id,"propertyId",name,email,phone,role,"isActive" FROM "user" ORDER BY name')).rows;
   let profiles=[];try{profiles=(await db.query('SELECT user_id,payload FROM friday_staff_profile')).rows;}catch(e){if(e.code!=='42P01')throw e;}
-  const users=require('./sample-labels').normalizeLabels(all.filter(u=>ids.has(u.propertyId)||u.id===req.user.id)).map(u=>({...u,...JSON.parse(profiles.find(p=>p.user_id===u.id)?.payload||'{}')}));
+  const users=require('./sample-labels').normalizeLabels(all.filter(u=>ids.has(u.propertyId)||u.id===req.user.id).map(u=>require('./staff-profile').publicStaff(u,JSON.parse(profiles.find(p=>p.user_id===u.id)?.payload||'{}'))));
   let row;try{row=(await db.query('SELECT payload,version FROM friday_owner_settings WHERE user_id=$1',[req.user.id])).rows[0];}catch(e){if(e.code!=='42P01')throw e;}
   res.json({properties:props,users,settings:row?JSON.parse(row.payload):{organizationName:'Taj Hospitality Workspace',timezone:'Asia/Kolkata',balanceAlerts:true,maintenanceAlerts:true,requestAlerts:true,planRequest:''},version:row?.version||0,subscription:{status:'Not configured',paymentProviderConnected:false},roles});
  }catch(e){console.error(JSON.stringify({event:'owner_load_failed',code:/^[A-Z0-9_]{2,32}$/.test(e.code||'')?e.code:'UNKNOWN'}));res.status(503).json({error:'Unable to load owner administration.'});}}

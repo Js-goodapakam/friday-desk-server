@@ -7,4 +7,8 @@ function staffProfile(body){
  if(typeof voiceAccess!=='boolean'||typeof whatsappAccess!=='boolean')throw Error('Choose channel access.');
  return {firstName:firstName.trim(),lastName:lastName.trim(),name:firstName.trim()+' '+lastName.trim(),email:email.trim().toLowerCase(),phone:phone.trim(),role,propertyId:Number(propertyId),voiceAccess,whatsappAccess};
 }
-module.exports={staffProfile};
+function publicStaff(user,profile={}){
+ const text=value=>typeof value==='string'?value:'';
+ return {id:user.id,propertyId:user.propertyId,name:text(user.name),email:text(user.email),phone:text(user.phone),role:text(user.role),isActive:user.isActive===true,firstName:text(profile.firstName),lastName:text(profile.lastName),voiceAccess:profile.voiceAccess===true,whatsappAccess:profile.whatsappAccess===true};
+}
+module.exports={staffProfile,publicStaff};
