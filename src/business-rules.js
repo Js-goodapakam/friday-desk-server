@@ -12,6 +12,7 @@ function validateBusiness(state){
  for(const channel of state.channelManager?.channels||[]){if(!channel.propertyCode?.trim())throw Error('Missing external property identifier.');const mappings=channel.mappings||[];if(new Set(mappings.map(m=>m.externalCode)).size!==mappings.length||mappings.some(m=>!roomTypes.has(m.roomTypeId)||!m.externalCode?.trim()))throw Error('Room mappings must be unique and link valid room types.');}
  for(const c of state.communications||[]){if(!guests.has(c.guestId)||!c.subject?.trim()||!c.body?.trim()||!['Email','Call','Message','Internal note'].includes(c.channel)||!['Draft','Recorded'].includes(c.status))throw Error('Communications require a guest, content and an honest delivery state.');}
  for(const t of state.tasks||[]){if(!t.title?.trim()||!/^\d{4}-\d{2}-\d{2}$/.test(t.dueDate)||!['Normal','High','Urgent'].includes(t.priority)||!['Open','In Progress','Complete'].includes(t.status))throw Error('Invalid task.');}
+ for(const request of state.requests||[]){const reservation=reservations.get(request.reservationId);if(!reservation||reservation.guestId!==request.guestId||typeof request.text!=='string'||!request.text.trim()||request.text.length>2000||!['Open','In Progress','Resolved','Closed'].includes(request.status)||!Number.isFinite(Date.parse(request.created)))throw Error('Invalid guest request or reservation link.');}
  return state;
 }
 module.exports={validateBusiness,stages};

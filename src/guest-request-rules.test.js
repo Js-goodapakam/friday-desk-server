@@ -1,0 +1,2 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{generateHotel}=require('./demo-data'),{validateBusiness}=require('./business-rules');
+test('guest requests must stay linked to the reservation guest and supported status',()=>{let state=generateHotel(0,1);state.requests[0].guestId='unknown';assert.throws(()=>validateBusiness(state),/guest request/);state=generateHotel(0,1);state.requests[0].status='Sent';assert.throws(()=>validateBusiness(state),/guest request/);state=generateHotel(0,1);assert.equal(validateBusiness(state),state);});
