@@ -19,7 +19,8 @@ app.use(
   })
 );
 
-app.use(express.json({limit:process.env.FRIDAY_LOCAL_DEV==='1'?'12mb':'256kb'}));
+const bodyParsers=require('./src/body-parsers').createParsers(express,process.env.FRIDAY_LOCAL_DEV==='1');
+app.use(bodyParsers.general);
 const auth = require("./src/auth").createAuth(db);
 const properties = require("./src/properties").propertyRoutes(db);
 app.use("/api/auth",auth.checkOrigin);
@@ -45,7 +46,7 @@ app.put('/api/owner/staff/:id',owner.editStaff);
 app.delete('/api/owner/staff/:id',owner.deleteStaff);
 const demoRoutes=require('./src/demo-routes').routes(db);
 app.get('/api/properties/:id/workspace',demoRoutes.get);
-app.put('/api/properties/:id/workspace',demoRoutes.put);
+app.put('/api/properties/:id/workspace',bodyParsers.workspace,demoRoutes.put);
 app.post('/api/properties/:id/mock-sync',demoRoutes.simulate);
 app.get('/api/properties/:id/activity',demoRoutes.audit);
 app.post('/api/properties/:id/revenue',demoRoutes.revenue);
@@ -611,6 +612,8 @@ app.post("/api/users", async (req, res) => {
     });
   }
 });
+
+app.use(bodyParsers.errors);
 
 if (require.main === module) {
   app.listen(PORT, () => {

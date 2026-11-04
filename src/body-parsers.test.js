@@ -1,0 +1,6 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),express=require('express'),{createParsers}=require('./body-parsers');
+test('larger workspace payloads require authentication; other routes keep the small limit',async()=>{
+ const app=express(),p=createParsers(express);app.use(p.general);app.put('/api/properties/:id/workspace',(req,res,next)=>req.headers['x-test-user']==='yes'?next():res.status(401).json({error:'Sign in'}),p.workspace,(req,res)=>res.json({length:req.body.data.length}));app.post('/api/other',(req,res)=>res.json({ok:true}));app.use(p.errors);
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.on('listening',r));const base='http://127.0.0.1:'+server.address().port;
+ try{const body=JSON.stringify({data:'x'.repeat(600000)});let r=await fetch(base+'/api/properties/1/workspace',{method:'PUT',headers:{'Content-Type':'application/json','x-test-user':'yes'},body});assert.equal(r.status,200);assert.equal((await r.json()).length,600000);r=await fetch(base+'/api/properties/1/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},body});assert.equal(r.status,401);r=await fetch(base+'/api/other',{method:'POST',headers:{'Content-Type':'application/json'},body});assert.equal(r.status,413);assert.match((await r.json()).error,/too large/);}finally{await new Promise(r=>server.close(r));}
+});

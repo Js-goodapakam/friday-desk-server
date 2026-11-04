@@ -70,7 +70,7 @@ async function project(client,id,state){
 }
 async function read(db,id){const found=await db.query('SELECT state_json,version FROM friday_demo_workspace WHERE property_id=$1',[id]);if(!found.rows[0])return null;return{state:require('./sample-labels').normalizeLabels(JSON.parse(found.rows[0].state_json)),version:found.rows[0].version};}
 async function save(db,id,state,version,actor){await assertWritableWorkspace(db,id);validate(state);return db.withTransaction(async client=>{
- const current=(await client.query('SELECT version,state_json FROM friday_demo_workspace WHERE property_id=$1',[id])).rows[0];
+ const current=(await client.query('SELECT version,state_json FROM friday_demo_workspace WHERE property_id=$1'+(db.file?'':' FOR UPDATE'),[id])).rows[0];
  if(!current||current.version!==version){const error=Error('This workspace changed. Reload before saving again.');error.status=409;throw error;}
  state.property.id=id;state.demo={seed:model.SEED,referenceDate:model.START,disclaimer:'SAMPLE DATA — NOT AFFILIATED WITH TAJ. Operational records are fictional.'};
  await project(client,id,state);
