@@ -40,6 +40,7 @@ app.get('/api/properties/:id',properties.select);
 app.post('/api/properties',properties.create);
 const owner=require('./src/owner-routes').ownerRoutes(db);
 app.get('/api/owner',owner.get);
+app.get('/api/access/catalogue',require('./src/access-catalogue').catalogue);
 app.put('/api/owner',owner.save);
 app.post('/api/owner/staff',owner.staff);
 app.put('/api/owner/staff/:id',owner.editStaff);
