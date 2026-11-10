@@ -1,4 +1,5 @@
 const { randomBytes, scryptSync, timingSafeEqual, createHash } = require('node:crypto');
+const { managedAccess } = require('./managed-access');
 
 function hashPassword(password) {
   const salt = randomBytes(16).toString('hex');
@@ -53,6 +54,10 @@ function createAuth(db, options = {}) {
         return res.status(401).json({error:'Incorrect email or password.'});
       }
       failures.delete(key);
+      const access = await managedAccess(db, user.propertyId);
+      if (access?.status === 'suspended') {
+        return res.status(403).json({error:'This workspace is suspended.'});
+      }
       const token = randomBytes(32).toString('hex');
       const seconds = remember === true ? 604800 : 28800;
       await db.query('INSERT INTO friday_sessions (token_hash,user_id,expires_at) VALUES ($1,$2,$3)',[digest(token),user.id,new Date(now+seconds*1000)]);
@@ -67,7 +72,12 @@ function createAuth(db, options = {}) {
     try {
       const result=await db.query('SELECT u.* FROM friday_sessions s JOIN "user" u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u."isActive"=true',[digest(token)]);
       if (!result.rows[0]) return res.status(401).json({error:'Your session has expired. Sign in again.'});
-      req.user=safeUser(result.rows[0]); next();
+      const user = result.rows[0];
+      const access = await managedAccess(db, user.propertyId);
+      if (access?.status === 'suspended') {
+        return res.status(403).json({error:'This workspace is suspended.'});
+      }
+      req.user=safeUser(user); next();
     } catch(error) { unavailable(res,error,'session'); }
   };
   const logout = async (req,res) => {

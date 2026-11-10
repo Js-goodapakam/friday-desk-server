@@ -5,7 +5,16 @@ function ownerRoutes(db){
  async function allowed(req,res){if(process.env.FRIDAY_LOCAL_DEV!=='1'&&(db.file||process.env.NODE_ENV!=='production')){res.status(503).json({error:'Owner administration storage requires deployment configuration.'});return false;}if(!['ADMIN','MANAGER'].includes(req.user.role)){res.status(403).json({error:'Owner or manager access required.'});return false;}return true;}
  async function schema(){if(process.env.FRIDAY_LOCAL_DEV!=='1'){const existing=await db.query("SELECT to_regclass('public.friday_staff_profile') AS staff, to_regclass('public.friday_owner_settings') AS settings");if(!existing.rows[0]?.staff||!existing.rows[0]?.settings)throw Error('Owner administration migration required.');return;}await db.query('CREATE TABLE IF NOT EXISTS friday_staff_profile(user_id INTEGER PRIMARY KEY REFERENCES "user"(id),payload TEXT NOT NULL)');await db.query('CREATE TABLE IF NOT EXISTS friday_owner_settings(user_id INTEGER PRIMARY KEY REFERENCES "user"(id),payload TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1)');}
  async function properties(req){const rows=(await db.query('SELECT * FROM property')).rows;const result=[];for(const p of rows)if(require('./demo-data').hotels.some(h=>h[0]===p.code)&&await canAccess(db,{...req.user,propertyId:req.user.homePropertyId||req.user.propertyId},p.id)){const saved=await require('./demo-store').read(db,p.id).catch(()=>null);if(saved)Object.assign(p,require('./demo-store').stats(saved.state));result.push(p);}return result;}
- async function get(req,res){try{if(!await allowed(req,res))return;if(process.env.FRIDAY_LOCAL_DEV==='1')await schema();const props=await properties(req),ids=new Set(props.map(p=>p.id));
+ async function get(req,res){try{if(!await allowed(req,res))return;
+  if(req.managedWorkspace){
+   const propertyId=req.user.propertyId;
+   const {rows:props}=await db.query('SELECT id,name,city,timezone FROM property WHERE id=$1',[propertyId]);
+   const {rows:users}=await db.query('SELECT id,"propertyId",name,email,role,"isActive" FROM "user" WHERE "propertyId"=$1 ORDER BY name',[propertyId]);
+   const {plan,status,modules}=req.managedWorkspace;
+   const {rows:[saved]}=await db.query('SELECT payload,version FROM friday_owner_settings WHERE user_id=$1',[req.user.id]);
+   return res.json({properties:props,users,settings:saved?JSON.parse(saved.payload):{organizationName:props[0]?.name,timezone:props[0]?.timezone},version:saved?.version||0,subscription:{plan,status,modules,paymentProviderConnected:false},roles});
+  }
+  if(process.env.FRIDAY_LOCAL_DEV==='1')await schema();const props=await properties(req),ids=new Set(props.map(p=>p.id));
   const all=(await db.query('SELECT id,"propertyId",name,email,phone,role,"isActive" FROM "user" ORDER BY name')).rows;
   let profiles=[];try{profiles=(await db.query('SELECT user_id,payload FROM friday_staff_profile')).rows;}catch(e){if(e.code!=='42P01')throw e;}
   const users=require('./sample-labels').normalizeLabels(all.filter(u=>ids.has(u.propertyId)||u.id===req.user.id).map(u=>require('./staff-profile').publicStaff(u,JSON.parse(profiles.find(p=>p.user_id===u.id)?.payload||'{}'))));
@@ -24,7 +33,7 @@ function ownerRoutes(db){
  async function writeStaff(req,res,editing){try{
   if(!await allowed(req,res))return;if(req.user.role!=='ADMIN')return res.status(403).json({error:'Administrator access required.'});
   let p;try{p=require('./staff-profile').staffProfile(req.body);}catch(e){return res.status(400).json({error:e.message});}
-  const permitted=await properties(req),ids=new Set(permitted.map(p=>Number(p.id)));
+  const permitted=req.managedWorkspace?[{id:req.user.propertyId}]:await properties(req),ids=new Set(permitted.map(p=>Number(p.id)));
   if(!ids.has(p.propertyId))return res.status(403).json({error:'Branch access denied.'});
   const targetId=Number(req.params?.id);let existing;
   if(editing){if(!Number.isSafeInteger(targetId)||targetId<1)return res.status(400).json({error:'Invalid user.'});existing=(await db.query('SELECT id,"propertyId",role FROM "user" WHERE id=$1',[targetId])).rows[0];if(!existing||!ids.has(Number(existing.propertyId)))return res.status(403).json({error:'User access denied.'});if(targetId===req.user.id&&(p.role!==existing.role||p.propertyId!==existing.propertyId))return res.status(400).json({error:'You cannot change your own role or branch.'});}
@@ -39,7 +48,9 @@ function ownerRoutes(db){
  }catch(e){res.status(/UNIQUE|unique/.test(e.message)?409:503).json({error:/UNIQUE|unique/.test(e.message)?'This email already has an account.':'Unable to save staff account.'});}}
  async function deleteStaff(req,res){try{
  if(!await allowed(req,res))return;if(req.user.role!=='ADMIN')return res.status(403).json({error:'Administrator access required.'});const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Invalid user.'});if(id===req.user.id)return res.status(400).json({error:'You cannot delete your own account.'});
- const target=(await db.query('SELECT id,"propertyId" FROM "user" WHERE id=$1',[id])).rows[0];if(!target||!(await properties(req)).some(p=>Number(p.id)===Number(target.propertyId)))return res.status(403).json({error:'User access denied.'});
+ const target=(await db.query('SELECT id,"propertyId" FROM "user" WHERE id=$1',[id])).rows[0];
+ const permitted=req.managedWorkspace?[{id:req.user.propertyId}]:await properties(req);
+ if(!target||!permitted.some(p=>Number(p.id)===Number(target.propertyId)))return res.status(403).json({error:'User access denied.'});
  await db.withTransaction(async client=>{await client.query('UPDATE "user" SET "isActive"=false,"updatedAt"=NOW() WHERE id=$1',[id]);await client.query('DELETE FROM friday_sessions WHERE user_id=$1',[id]);await client.query('INSERT INTO friday_demo_audit(property_id,actor_id,action,at,payload) VALUES($1,$2,$3,NOW(),$4)',[target.propertyId,req.user.id,'Staff account deactivated',JSON.stringify({userId:id})]);});res.json({success:true});
  }catch{res.status(503).json({error:'Unable to delete staff account.'});}}
  return{get,save,staff,editStaff,deleteStaff};

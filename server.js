@@ -23,17 +23,19 @@ const bodyParsers=require('./src/body-parsers').createParsers(express,process.en
 app.use(bodyParsers.general);
 const auth = require("./src/auth").createAuth(db);
 const properties = require("./src/properties").propertyRoutes(db);
+const moduleAccess = require('./src/module-access').moduleAccess(db);
 app.use("/api/auth",auth.checkOrigin);
 app.post("/api/auth/login",auth.login);
 app.get("/api/auth/session",auth.requireSession,(req,res)=>res.json({user:req.user}));
 app.post("/api/auth/logout",auth.logout);
+app.post('/api/internal/managed-workspaces/:customerId', require('./src/managed-routes').managedRoutes(db));
 app.use("/api",(req,res,next)=>{
  if(req.path==="/health")return next();
  if(req.path.startsWith("/webhooks/")){
   if(!process.env.TELECMI_WEBHOOK_TOKEN || req.headers["x-webhook-token"]!==process.env.TELECMI_WEBHOOK_TOKEN)return res.status(401).json({error:"Webhook authentication required."});
   return next();
  }
- auth.requireSession(req,res,()=>auth.checkOrigin(req,res,()=>properties.scope(req,res,next)));
+ auth.requireSession(req,res,()=>auth.checkOrigin(req,res,()=>properties.scope(req,res,()=>moduleAccess(req,res,next))));
 });
 app.get('/api/properties',properties.list);
 app.get('/api/properties/:id',properties.select);
@@ -45,11 +47,12 @@ app.post('/api/owner/staff',owner.staff);
 app.put('/api/owner/staff/:id',owner.editStaff);
 app.delete('/api/owner/staff/:id',owner.deleteStaff);
 const demoRoutes=require('./src/demo-routes').routes(db);
-app.get('/api/properties/:id/workspace',demoRoutes.get);
-app.put('/api/properties/:id/workspace',bodyParsers.workspace,demoRoutes.put);
+const liveWorkspace = require('./src/live-workspace').workspaceHandler(db);
+app.get('/api/properties/:id/workspace',liveWorkspace,demoRoutes.get);
+app.put('/api/properties/:id/workspace',bodyParsers.workspace,liveWorkspace,demoRoutes.put);
 app.post('/api/properties/:id/mock-sync',demoRoutes.simulate);
 app.get('/api/properties/:id/activity',demoRoutes.audit);
-app.post('/api/properties/:id/revenue',demoRoutes.revenue);
+app.post('/api/properties/:id/revenue',liveWorkspace,demoRoutes.revenue);
 app.get("/api/call-logs/:id/recording", async (req, res) => {
   try {
     const callLogId = Number(req.params.id);
