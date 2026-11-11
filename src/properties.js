@@ -1,11 +1,14 @@
 const { randomBytes } = require('node:crypto');
+const { managedAccess } = require('./managed-access');
 
 async function canAccess(db, user, id) {
   if(process.env.FRIDAY_LOCAL_DEV==='1'&&db.file){const property=(await db.query('SELECT code FROM property WHERE id=$1',[id])).rows[0];if(!property||!require('./demo-data').hotels.some(h=>h[0]===property.code))return false;}
-  if (Number(user.propertyId) === Number(id)) return true;
+  if (Number(user.propertyId) === Number(id)) {
+    return (await managedAccess(db, id))?.status !== 'suspended';
+  }
   try {
     const result = await db.query('SELECT property_id FROM friday_property_access WHERE user_id=$1 AND property_id=$2',[user.id,id]);
-    return result.rows.length > 0;
+    return result.rows.length > 0 && (await managedAccess(db, id))?.status !== 'suspended';
   } catch(error) { if (error.code==='42P01') return false; throw error; }
 }
 
