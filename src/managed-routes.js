@@ -16,7 +16,7 @@ function managedRoutes(db) {
     if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) {
       return res.status(400).json({ error: 'Invalid customer ID.' });
     }
-    const { action, name, city, adminName, email, password, plan, modules } = req.body || {};
+    const { action, name, city, adminName, email, password, plan, modules, entitlements } = req.body || {};
     if (['approve', 'configure'].includes(action) &&
       (!validText(plan, 80) || !Object.hasOwn(planModules, plan) ||
         !Array.isArray(modules) || new Set(modules).size !== modules.length ||
@@ -45,6 +45,18 @@ function managedRoutes(db) {
         result = await db.query(
           'UPDATE engagestay_managed_workspace SET status=$2, updated_at=now() WHERE customer_id=$1 RETURNING property_id,status,plan,modules',
           [id, action === 'suspend' ? 'suspended' : 'active']
+        );
+      } else if (action === 'sync_entitlements') {
+        if (!entitlements || typeof entitlements !== 'object' || Array.isArray(entitlements)) {
+          return res.status(400).json({ error: 'Invalid entitlement payload.' });
+        }
+        result = await db.query(
+          `UPDATE engagestay_workspace_state s
+             SET state = jsonb_set(s.state, '{ownerEntitlements}', $2::jsonb, true), version = version + 1
+            FROM engagestay_managed_workspace m
+           WHERE m.property_id = s.property_id AND m.customer_id = $1
+           RETURNING m.property_id,m.status,m.plan,m.modules`,
+          [id, JSON.stringify(entitlements)]
         );
       } else {
         return res.status(400).json({ error: 'Unknown lifecycle action.' });
