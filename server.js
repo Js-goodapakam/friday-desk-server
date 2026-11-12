@@ -28,6 +28,9 @@ app.use("/api/auth",auth.checkOrigin);
 app.post("/api/auth/login",auth.login);
 app.get("/api/auth/session",auth.requireSession,(req,res)=>res.json({user:req.user}));
 app.post("/api/auth/logout",auth.logout);
+const socialSignup=require('./src/social-signup').socialSignupRoutes();
+app.get('/api/auth/social/:provider',socialSignup.start);
+app.get('/api/auth/social/:provider/callback',socialSignup.callback);
 app.post('/api/internal/managed-workspaces/:customerId', require('./src/managed-routes').managedRoutes(db));
 app.use("/api",(req,res,next)=>{
  if(req.path==="/health")return next();
