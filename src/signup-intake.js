@@ -161,7 +161,24 @@ async function complete(req, res) {
       signal: AbortSignal.timeout(12000),
     });
     if (!ownerRequest.ok) {
-      console.error(JSON.stringify({ event: 'engagestay_signup_owner_delivery_failed', status: ownerRequest.status }));
+      // Identify the rejection layer without recording customer data or tokens.
+      // Vercel deployment protection rejects before the Owner API can answer;
+      // the Owner application returns JSON with SERVICE_AUTH_REQUIRED for a
+      // mismatched service credential.
+      const contentType = ownerRequest.headers.get('content-type') || '';
+      let upstreamCode = '';
+      if (contentType.includes('application/json')) {
+        const upstreamBody = await ownerRequest.json().catch(() => ({}));
+        const code = upstreamBody?.error;
+        if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,60}$/.test(code)) upstreamCode = code;
+      }
+      console.error(JSON.stringify({
+        event: 'engagestay_signup_owner_delivery_failed',
+        status: ownerRequest.status,
+        layer: upstreamCode === 'SERVICE_AUTH_REQUIRED' ? 'service_token' :
+          contentType.includes('text/html') ? 'vercel_protection' : 'unknown',
+        oidcPresented: Boolean(process.env.VERCEL === '1' && oidcToken),
+      }));
       return sendError(res, 502, 'Your email is confirmed, but your onboarding request could not be submitted. Please retry.');
     }
     return res.status(202).json({ accepted: true, status: 'PENDING_REVIEW' });
