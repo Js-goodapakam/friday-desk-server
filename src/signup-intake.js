@@ -132,13 +132,24 @@ async function complete(req, res) {
     }
 
     const key = createHash('sha256').update('engage_stay:email:' + user.id).digest('hex');
+
+    // Vercel's deployment protection sits in front of the Owner Tool API.
+    // Forward the short-lived, platform-issued OIDC identity for Trusted
+    // Sources verification. The Owner API still requires its independent
+    // ENGAGE_OWNER_SERVICE_TOKEN in Authorization.
+    const oidcToken = req.get('x-vercel-oidc-token');
+    const ownerHeaders = {
+      Authorization: 'Bearer ' + config.ownerToken,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': key,
+    };
+    if (process.env.VERCEL === '1' && oidcToken) {
+      ownerHeaders['x-vercel-trusted-oidc-idp-token'] = oidcToken;
+    }
+
     const ownerRequest = await fetch(new URL('/api/integrations/engagestay/signup', config.ownerOrigin), {
       method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + config.ownerToken,
-        'Content-Type': 'application/json',
-        'Idempotency-Key': key,
-      },
+      headers: ownerHeaders,
       body: JSON.stringify({
         source: 'email',
         externalUserId: String(user.id),
