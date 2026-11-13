@@ -31,6 +31,9 @@ app.post("/api/auth/logout",auth.logout);
 const socialSignup=require('./src/social-signup').socialSignupRoutes();
 app.get('/api/auth/social/:provider',socialSignup.start);
 app.get('/api/auth/social/:provider/callback',socialSignup.callback);
+const verifiedSignup=require('./src/signup-intake').signupRoutes;
+app.post('/api/auth/signup/start',verifiedSignup.start);
+app.post('/api/auth/signup/complete',verifiedSignup.complete);
 app.post('/api/internal/managed-workspaces/:customerId', require('./src/managed-routes').managedRoutes(db));
 app.use("/api",(req,res,next)=>{
  if(req.path==="/health")return next();
