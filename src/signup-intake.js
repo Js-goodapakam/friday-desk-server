@@ -55,9 +55,36 @@ async function start(req, res) {
       signal: AbortSignal.timeout(12000),
     });
     if (!response.ok) {
-      // Do not expose Supabase's account-existence diagnostics.
-      if (response.status === 429) return sendError(res, 429, 'Too many requests. Please try again later.');
-      return sendError(res, 502, 'Unable to send an email confirmation. Please try again or contact support.');
+      // Supabase GoTrue returns a machine-readable error code. Preserve only
+      // a bounded, safe code in operational logs; never log identity, password,
+      // email address, full upstream response, or any authorization headers.
+      const failure = await response.json().catch(() => ({}));
+      const rawCode = typeof failure.code === 'string' ? failure.code : '';
+      const errorCode = /^[a-z][a-z0-9_]{0,79}$/.test(rawCode) ? rawCode : 'unknown';
+      console.error(JSON.stringify({
+        event: 'engagestay_email_signup_failed',
+        status: response.status,
+        code: errorCode,
+      }));
+
+      // Do not expose whether a particular email address has an account.
+      if (errorCode === 'email_address_not_authorized') {
+        return sendError(res, 503,
+          'Engage Stay cannot send verification emails to customer addresses yet. The administrator must configure a custom SMTP provider in Supabase Authentication.');
+      }
+      if (response.status === 429 || errorCode === 'over_email_send_rate_limit') {
+        return sendError(res, 429,
+          'The verification-email sending limit has been reached. Try again later or ask your administrator to configure a custom SMTP provider.');
+      }
+      if (errorCode === 'email_provider_disabled' || errorCode === 'signup_disabled') {
+        return sendError(res, 503,
+          'Email registration is disabled in the authentication provider. Please contact the Engagehubs administrator.');
+      }
+      if (errorCode === 'email_address_invalid') {
+        return sendError(res, 400, 'This email address cannot receive a verification email. Please use a valid email address.');
+      }
+      return sendError(res, 502,
+        'Unable to send a verification email. Please contact Engagehubs support.');
     }
 
     const result = await response.json();
