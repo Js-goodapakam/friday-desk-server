@@ -88,10 +88,17 @@ async function start(req, res) {
     }
 
     const result = await response.json();
-    // A hosted project must require email confirmation. Do not treat
-    // auto-confirmed accounts as verified customer signups.
-    if (result.access_token || result.session?.access_token || result.user?.email_confirmed_at) {
-      return sendError(res, 503, 'Email confirmation must be enabled by the Engagehubs administrator before registration can continue.');
+    // Supabase may issue a confirmed session immediately when the project's
+    // Confirm email setting is disabled. Honour that official provider mode
+    // only when deliberately enabled by the application administrator.
+    // Re-verify the token with Supabase before delivering to the Owner Tool.
+    const confirmedToken = result.access_token || result.session?.access_token;
+    if (confirmedToken || result.user?.email_confirmed_at) {
+      if (process.env.ENGAGE_SIGNUP_ACCEPT_AUTO_CONFIRM !== 'true' ||
+          typeof confirmedToken !== 'string') {
+        return sendError(res, 503, 'Email confirmation settings are not aligned with Engage Stay registration. Contact the administrator.');
+      }
+      return complete(req, res, confirmedToken);
     }
 
     recentRequests.set(limiterKey, now);
@@ -104,11 +111,11 @@ async function start(req, res) {
   }
 }
 
-async function complete(req, res) {
+async function complete(req, res, confirmedToken) {
   const config = settings();
   if (!config) return sendError(res, 503, 'Registration processing is not configured.');
 
-  const token = req.body?.accessToken;
+  const token = typeof confirmedToken === 'string' ? confirmedToken : req.body?.accessToken;
   if (typeof token !== 'string' || token.length < 30 || token.length > 8192 ||
       !/^[A-Za-z0-9._-]+$/.test(token)) {
     return sendError(res, 400, 'A valid email confirmation is required.');
