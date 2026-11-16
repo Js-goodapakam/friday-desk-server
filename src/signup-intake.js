@@ -4,6 +4,10 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const phonePattern = /^\+[1-9]\d{7,14}$/;
 const recentRequests = new Map();
 
+function emailConfirmationRequired() {
+  return process.env.ENGAGE_SKIP_EMAIL_VERIFICATION !== 'true';
+}
+
 function settings() {
   const url = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
   const key = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
@@ -31,15 +35,61 @@ async function start(req, res) {
   const phone = typeof mobile === 'string' ? mobile.trim() : '';
 
   if (name.length < 2 || name.length > 160 || !emailPattern.test(address) ||
-      address.length > 254 || typeof password !== 'string' ||
-      password.length < 10 || password.length > 128 || !phonePattern.test(phone)) {
+      address.length > 254 || (emailConfirmationRequired() && (typeof password !== 'string' || password.length < 10 || password.length > 128)) || !phonePattern.test(phone)) {
     return sendError(res, 400, 'Please provide a valid business name, email, phone number and password of at least 10 characters.');
   }
 
   const limiterKey = createHash('sha256').update(String(req.ip) + ':' + address).digest('hex');
   const now = Date.now();
   if ((recentRequests.get(limiterKey) || 0) > now - 60000) {
-    return sendError(res, 429, 'A verification email was recently requested. Please check your inbox before trying again.');
+    return sendError(res, 429, 'A registration was recently submitted. Please wait before trying again.');
+  }
+
+  // Temporary, reversible lead-only registration. It NEVER creates a confirmed
+  // Supabase identity or grants client access without proof of email ownership.
+  if (!emailConfirmationRequired()) {
+    // Additional per-IP limiter protects the public Owner Tool intake from spam.
+    const ipKey = 'ip:' + createHash('sha256').update(String(req.ip)).digest('hex');
+    const ipBucket = recentRequests.get(ipKey);
+    if (Array.isArray(ipBucket) && ipBucket[1] > now - 3600000 && ipBucket[0] >= 5) {
+      return sendError(res, 429, 'Too many registration requests. Please try again later.');
+    }
+    try {
+      const id = 'unverified:' + createHash('sha256').update(address).digest('hex');
+      const key = createHash('sha256').update('engage_stay:unverified:' + address).digest('hex');
+      const ownerHeaders = {
+        Authorization: 'Bearer ' + config.ownerToken,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': key,
+      };
+      const oidcToken = req.get('x-vercel-oidc-token');
+      if (process.env.VERCEL === '1' && oidcToken) {
+        ownerHeaders['x-vercel-trusted-oidc-idp-token'] = oidcToken;
+      }
+      const response = await fetch(new URL('/api/integrations/engagestay/signup', config.ownerOrigin), {
+        method: 'POST', headers: ownerHeaders,
+        body: JSON.stringify({
+          source: 'email', externalUserId: id, email: address,
+          organizationName: name, phone, requestedLifecycle: 'TRIAL',
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) {
+        const body = response.headers.get('content-type')?.includes('json') ? await response.json().catch(() => ({})) : {};
+        const errorCode = typeof body.error === 'string' && /^[A-Z_]{3,60}$/.test(body.error) ? body.error : 'UNKNOWN';
+        console.error(JSON.stringify({ event: 'engagestay_unverified_lead_delivery_failed', status: response.status, code: errorCode }));
+        return sendError(res, 502, 'Unable to submit registration to the Owner Tool. Please retry shortly.');
+      }
+      recentRequests.set(limiterKey, now);
+      recentRequests.set(ipKey, [ipBucket && ipBucket[1] > now - 3600000 ? ipBucket[0] + 1 : 1, now]);
+      return res.status(202).json({
+        accepted: true, status: 'PENDING_REVIEW',
+        emailVerified: false, accountCreated: false,
+      });
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'engagestay_unverified_lead_unavailable', type: error?.name === 'TimeoutError' ? 'timeout' : 'error' }));
+      return sendError(res, 503, 'Registration service is unavailable. Please retry shortly.');
+    }
   }
 
   try {
@@ -215,4 +265,4 @@ async function complete(req, res, confirmedToken) {
   }
 }
 
-module.exports = { signupRoutes: { start, complete } };
+module.exports = { signupRoutes: { start, complete }, emailConfirmationRequired };
