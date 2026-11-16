@@ -60,7 +60,21 @@ async function start(req, res) {
       // email address, full upstream response, or any authorization headers.
       const failure = await response.json().catch(() => ({}));
       const rawCode = typeof failure.code === 'string' ? failure.code : '';
-      const errorCode = /^[a-z][a-z0-9_]{0,79}$/.test(rawCode) ? rawCode : 'unknown';
+      const rawMessage = [failure.msg, failure.message, failure.error_description, failure.error]
+        .filter(value => typeof value === 'string').join(' ').toLowerCase();
+      // Supabase Auth sometimes returns older GoTrue error shapes with no
+      // machine-readable "code". Classify known messages without logging the
+      // full response, which could contain email addresses or other PII.
+      const messageCode =
+        /email.*(?:rate.limit|too.many)|(?:rate.limit|too.many).*email/.test(rawMessage) ? 'over_email_send_rate_limit' :
+        /(?:email|address).*(?:not.authorized|not.allowed|smtp)/.test(rawMessage) ? 'email_address_not_authorized' :
+        /(?:signup|sign.up|registration).*(?:disabled|not.allowed|not.permitted)/.test(rawMessage) ? 'signup_disabled' :
+        /(?:email|address).*(?:invalid|not.valid)/.test(rawMessage) ? 'email_address_invalid' :
+        /(?:email|mail).*(?:provider|disabled)/.test(rawMessage) ? 'email_provider_disabled' :
+        /(?:invalid|missing).*(?:api.key|apikey|jwt)/.test(rawMessage) ? 'invalid_apikey' :
+        /(?:already.registered|already.exists)/.test(rawMessage) ? 'user_already_exists' :
+        'unknown';
+      const errorCode = /^[a-z][a-z0-9_]{0,79}$/.test(rawCode) ? rawCode : messageCode;
       console.error(JSON.stringify({
         event: 'engagestay_email_signup_failed',
         status: response.status,
@@ -82,6 +96,13 @@ async function start(req, res) {
       }
       if (errorCode === 'email_address_invalid') {
         return sendError(res, 400, 'This email address cannot receive a verification email. Please use a valid email address.');
+      }
+      if (errorCode === 'invalid_apikey') {
+        return sendError(res, 503, 'Engage Stay authentication credentials are not configured correctly. Please contact Engagehubs support.');
+      }
+      if (errorCode === 'user_already_exists') {
+        // Do not disclose account existence on a public registration form.
+        return sendError(res, 400, 'Registration could not be completed. Try signing in or contact Engagehubs support.');
       }
       return sendError(res, 502,
         'Unable to send a verification email. Please contact Engagehubs support.');
