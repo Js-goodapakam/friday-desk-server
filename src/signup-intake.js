@@ -35,7 +35,7 @@ async function start(req, res) {
   const phone = typeof mobile === 'string' ? mobile.trim() : '';
 
   if (name.length < 2 || name.length > 160 || !emailPattern.test(address) ||
-      address.length > 254 || (emailConfirmationRequired() && (typeof password !== 'string' || password.length < 10 || password.length > 128)) || !phonePattern.test(phone)) {
+      address.length > 254 || typeof password !== 'string' || password.length < 10 || password.length > 128 || !phonePattern.test(phone)) {
     return sendError(res, 400, 'Please provide a valid business name, email, phone number and password of at least 10 characters.');
   }
 
@@ -45,18 +45,59 @@ async function start(req, res) {
     return sendError(res, 429, 'A registration was recently submitted. Please wait before trying again.');
   }
 
-  // Temporary, reversible lead-only registration. It NEVER creates a confirmed
-  // Supabase identity or grants client access without proof of email ownership.
+  // Temporary Owner-review registration, without email verification messages.
+  // Preserve the customer's chosen password in Supabase Auth (not in a lead
+  // table). Email remains unconfirmed and the account cannot be used for login
+  // before the normal Owner approval and app provisioning process.
   if (!emailConfirmationRequired()) {
-    // Additional per-IP limiter protects the public Owner Tool intake from spam.
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+    if (!serviceKey) return sendError(res, 503, 'Account registration is not configured. Contact support.');
     const ipKey = 'ip:' + createHash('sha256').update(String(req.ip)).digest('hex');
     const ipBucket = recentRequests.get(ipKey);
     if (Array.isArray(ipBucket) && ipBucket[1] > now - 3600000 && ipBucket[0] >= 5) {
       return sendError(res, 429, 'Too many registration requests. Please try again later.');
     }
+
+    let newUserId;
     try {
-      const id = 'unverified:' + createHash('sha256').update(address).digest('hex');
-      const key = createHash('sha256').update('engage_stay:unverified:' + address).digest('hex');
+      // Admin createUser does not send an email confirmation. Unlike
+      // email_confirm:true this does NOT claim ownership of an unverified email.
+      const created = await fetch(config.url + '/auth/v1/admin/users', {
+        method: 'POST',
+        headers: {
+          apikey: serviceKey, Authorization: 'Bearer ' + serviceKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: address, password, email_confirm: false,
+          user_metadata: {
+            engage_stay_signup: true, organization_name: name, phone,
+            account_review: 'pending', email_verified_by_user: false,
+          },
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!created.ok) {
+        const error = await created.json().catch(() => ({}));
+        const rawCode = typeof error.code === 'string' ? error.code : '';
+        console.error(JSON.stringify({
+          event: 'engagestay_pending_auth_create_failed',
+          status: created.status,
+          code: /^[a-z_]{3,80}$/.test(rawCode) ? rawCode : 'unknown',
+        }));
+        return sendError(res, created.status === 422 ? 409 : 502,
+          created.status === 422
+            ? 'Registration could not be completed. Please sign in or contact support.'
+            : 'Unable to create your pending account. Please retry later.');
+      }
+      const createdUser = await created.json();
+      newUserId = createdUser?.user?.id || createdUser?.id;
+      if (!/^[0-9a-f-]{36}$/i.test(String(newUserId || ''))) {
+        return sendError(res, 502, 'Account creation could not be verified.');
+      }
+
+      const externalId = 'unverified:' + newUserId;
+      const key = createHash('sha256').update('engage_stay:pending_auth:' + newUserId).digest('hex');
       const ownerHeaders = {
         Authorization: 'Bearer ' + config.ownerToken,
         'Content-Type': 'application/json',
@@ -69,26 +110,41 @@ async function start(req, res) {
       const response = await fetch(new URL('/api/integrations/engagestay/signup', config.ownerOrigin), {
         method: 'POST', headers: ownerHeaders,
         body: JSON.stringify({
-          source: 'email', externalUserId: id, email: address,
-          organizationName: name, phone, requestedLifecycle: 'TRIAL',
+          source: 'email', externalUserId: externalId,
+          email: address, organizationName: name, phone,
+          requestedLifecycle: 'TRIAL',
         }),
         signal: AbortSignal.timeout(12000),
       });
       if (!response.ok) {
-        const body = response.headers.get('content-type')?.includes('json') ? await response.json().catch(() => ({})) : {};
-        const errorCode = typeof body.error === 'string' && /^[A-Z_]{3,60}$/.test(body.error) ? body.error : 'UNKNOWN';
-        console.error(JSON.stringify({ event: 'engagestay_unverified_lead_delivery_failed', status: response.status, code: errorCode }));
-        return sendError(res, 502, 'Unable to submit registration to the Owner Tool. Please retry shortly.');
+        // The account has no confirmed email and no app access. Preserve it for
+        // support/retry rather than deleting an unknown existing identity.
+        const result = response.headers.get('content-type')?.includes('json')
+          ? await response.json().catch(() => ({})) : {};
+        const errorCode = /^[A-Z_]{3,60}$/.test(String(result.error || ''))
+          ? result.error : 'UNKNOWN';
+        console.error(JSON.stringify({
+          event: 'engagestay_pending_owner_delivery_failed',
+          status: response.status, code: errorCode,
+        }));
+        return sendError(res, 502, 'Your pending account was created, but Owner review submission failed. Please contact support before retrying.');
       }
+
       recentRequests.set(limiterKey, now);
-      recentRequests.set(ipKey, [ipBucket && ipBucket[1] > now - 3600000 ? ipBucket[0] + 1 : 1, now]);
+      recentRequests.set(ipKey, [
+        ipBucket && ipBucket[1] > now - 3600000 ? ipBucket[0] + 1 : 1, now,
+      ]);
       return res.status(202).json({
         accepted: true, status: 'PENDING_REVIEW',
-        emailVerified: false, accountCreated: false,
+        emailVerified: false, accountCreated: true, accountActive: false,
       });
     } catch (error) {
-      console.error(JSON.stringify({ event: 'engagestay_unverified_lead_unavailable', type: error?.name === 'TimeoutError' ? 'timeout' : 'error' }));
-      return sendError(res, 503, 'Registration service is unavailable. Please retry shortly.');
+      console.error(JSON.stringify({
+        event: 'engagestay_pending_registration_unavailable',
+        reason: error?.name === 'TimeoutError' ? 'timeout' : 'unexpected',
+        accountCreated: Boolean(newUserId),
+      }));
+      return sendError(res, 503, 'Account registration is temporarily unavailable. Please contact support.');
     }
   }
 
