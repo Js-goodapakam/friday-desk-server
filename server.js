@@ -32,6 +32,7 @@ const socialSignup=require('./src/social-signup').socialSignupRoutes();
 app.get('/api/auth/social/:provider',socialSignup.start);
 app.get('/api/auth/social/:provider/callback',socialSignup.callback);
 const verifiedSignup=require('./src/signup-intake').signupRoutes;
+app.get('/api/auth/signup/mode',(_req,res)=>res.json({ emailVerificationRequired: require('./src/signup-intake').emailConfirmationRequired() }));
 app.post('/api/auth/signup/start',verifiedSignup.start);
 app.post('/api/auth/signup/complete',verifiedSignup.complete);
 app.post('/api/internal/managed-workspaces/:customerId', require('./src/managed-routes').managedRoutes(db));
