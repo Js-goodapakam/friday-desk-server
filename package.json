@@ -8,6 +8,7 @@
     "dev": "node --watch server.js",
     "dev:local": "node scripts/local-dev.js",
     "test": "node --test src/*.test.js",
+    "test:isolated-db:guard": "node --test scripts/assert-isolated-test-db.test.js",
     "demo:seed": "node scripts/seed-demo.js --local",
     "demo:validate": "node scripts/seed-demo.js --local --validate-only",
     "demo:seed:production": "node scripts/seed-production-sample.js",
