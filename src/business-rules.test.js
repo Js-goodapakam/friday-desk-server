@@ -12,6 +12,27 @@ test('unconfigured communication records cannot claim delivery',()=>{
 test('checkout requires settlement and changes housekeeping separately',()=>{
  const before=model.generateHotel(0,100),next=structuredClone(before);next.reservations[0].status='Checked Out';next.reservations[0].balance=1;assert.throws(()=>validateTransitions(before,next),/settled/);next.reservations[0].balance=0;validateTransitions(before,next);assert.equal(next.rooms[0].housekeepingStatus,'Dirty');assert.equal(next.rooms[0].status,'Available');
 });
+test('room allocation, check-in and check-out retain safe reservation lifecycle rules',()=>{
+ const before=model.generateHotel(0,100),next=structuredClone(before);
+ const reservation=next.reservations.find(r=>r.status==='Confirmed'&&r.arrival<=next.demo.referenceDate&&r.departure>next.demo.referenceDate);
+ assert.ok(reservation,'fixture must include an eligible arrival');
+ const room=next.rooms.find(item=>item.number===reservation.room);
+ room.housekeepingStatus='Dirty';reservation.status='Checked In';
+ assert.throws(()=>validateTransitions(before,next),/clean or inspected/);
+ room.housekeepingStatus='Clean';assert.doesNotThrow(()=>validateTransitions(before,next));assert.equal(room.status,'Occupied');
+ const checkedIn=structuredClone(next);checkedIn.reservations.find(r=>r.id===reservation.id).status='Checked Out';checkedIn.reservations.find(r=>r.id===reservation.id).balance=0;
+ assert.doesNotThrow(()=>validateTransitions(next,checkedIn));assert.equal(checkedIn.rooms.find(item=>item.number===reservation.room).status,'Available');assert.equal(checkedIn.rooms.find(item=>item.number===reservation.room).housekeepingStatus,'Dirty');
+});
+test('two conflicting reservation payloads cannot both pass allocation validation',()=>{
+ const baseline=model.generateHotel(0,100),first=structuredClone(baseline),second=structuredClone(baseline);
+ const source=baseline.reservations.find(r=>['Confirmed','Modified'].includes(r.status));
+ assert.ok(source);
+ const candidate=(state,id)=>({ ...structuredClone(source),id,guestId:state.guests.at(-1).id,status:'Confirmed',arrival:source.arrival,departure:source.departure,room:source.room,roomTypeId:source.roomTypeId });
+ first.reservations.push(candidate(first,'CONCURRENT-A'));
+ second.reservations.push(candidate(second,'CONCURRENT-B'));
+ assert.throws(()=>require('./demo-store').validate(first),/Overlapping room allocations/);
+ assert.throws(()=>require('./demo-store').validate(second),/Overlapping room allocations/);
+});
 test('display labels retain internal identifiers and replace visible legacy labels',()=>{
  const out=normalizeLabels({demo:{seed:model.SEED,disclaimer:'DEMO — NOT AFFILIATED WITH TAJ'},name:'Demo staff',number:'DEMO-001'});assert.equal(out.demo.seed,model.SEED);assert.doesNotMatch(out.name,/demo/i);assert.equal(out.number,'SAMPLE-001');
 });
