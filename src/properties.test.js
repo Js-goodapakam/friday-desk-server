@@ -16,6 +16,14 @@ test('unassigned property selection and context headers are rejected',async()=>{
  let res=response();await routes.select({user:{...user},params:{id:'99'}},res);assert.equal(res.statusCode,403);
  res=response();await routes.scope({user:{...user},headers:{'x-friday-property-id':'99'}},res,()=>assert.fail('unauthorized scope'));assert.equal(res.statusCode,403);
 });
+test('a suspended property is denied even if the user holds an explicit membership',async()=>{
+ const db={query:async(sql,args)=>{
+  if(sql.includes('engagestay_managed_workspace'))return {rows:[{status:'suspended'}]};
+  if(sql.includes('friday_property_access'))return {rows:[{property_id:20}]};
+  return {rows:[]};
+ }};
+ assert.equal(await canAccess(db,user,20),false);
+});
 test('creating properties requires admin permission and valid details',async()=>{
  const routes=propertyRoutes({query:async()=>{throw Error('Should not query');}});
  let res=response();await routes.create({user:{...user,role:'FRONT_DESK'},body:{name:'Hotel',city:'City'}},res);assert.equal(res.statusCode,403);

@@ -64,3 +64,10 @@ test('a valid Supabase token is not enough without a provisioned identity mappin
  try{const res=response();await fixture().supabaseSession({headers:{authorization:'Bearer verified-token'},body:{}},res);assert.equal(res.statusCode,403);assert.equal(res.headers['Set-Cookie'],undefined);}
  finally{if(priorUrl===undefined)delete process.env.SUPABASE_URL;else process.env.SUPABASE_URL=priorUrl;if(priorKey===undefined)delete process.env.SUPABASE_ANON_KEY;else process.env.SUPABASE_ANON_KEY=priorKey;}
 });
+test('a linked Supabase identity is denied immediately when its workspace is suspended',async(t)=>{
+ const priorUrl=process.env.SUPABASE_URL,priorKey=process.env.SUPABASE_ANON_KEY;
+ process.env.SUPABASE_URL='https://test-project.supabase.co';process.env.SUPABASE_ANON_KEY='publishable-test-key';
+ t.mock.method(global,'fetch',async()=>({ok:true,json:async()=>({id:'11111111-1111-4111-8111-111111111111',email_confirmed_at:'2026-01-01T00:00:00Z'})}));
+ try{const res=response();await fixture({status:'suspended'}).supabaseSession({headers:{authorization:'Bearer verified-token'},body:{}},res);assert.equal(res.statusCode,403);assert.equal(res.headers['Set-Cookie'],undefined);}
+ finally{if(priorUrl===undefined)delete process.env.SUPABASE_URL;else process.env.SUPABASE_URL=priorUrl;if(priorKey===undefined)delete process.env.SUPABASE_ANON_KEY;else process.env.SUPABASE_ANON_KEY=priorKey;}
+});
