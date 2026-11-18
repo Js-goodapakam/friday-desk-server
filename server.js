@@ -26,6 +26,8 @@ const properties = require("./src/properties").propertyRoutes(db);
 const moduleAccess = require('./src/module-access').moduleAccess(db);
 app.use("/api/auth",auth.checkOrigin);
 app.post("/api/auth/login",auth.login);
+app.post("/api/auth/supabase/login",auth.supabaseLogin);
+app.post("/api/auth/supabase/session",auth.supabaseSession);
 app.get("/api/auth/session",auth.requireSession,(req,res)=>res.json({user:req.user}));
 app.post("/api/auth/logout",auth.logout);
 const socialSignup=require('./src/social-signup').socialSignupRoutes();

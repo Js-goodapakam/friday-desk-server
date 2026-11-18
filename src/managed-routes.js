@@ -16,7 +16,7 @@ function managedRoutes(db) {
     if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) {
       return res.status(400).json({ error: 'Invalid customer ID.' });
     }
-    const { action, name, city, adminName, email, password, plan, modules, entitlements } = req.body || {};
+    const { action, name, city, adminName, email, password, authUserId, plan, modules, entitlements } = req.body || {};
     if (['approve', 'configure'].includes(action) &&
       (!validText(plan, 80) || !Object.hasOwn(planModules, plan) ||
         !Array.isArray(modules) || new Set(modules).size !== modules.length ||
@@ -27,12 +27,12 @@ function managedRoutes(db) {
       if (action === 'approve') {
         if (![name, city, adminName].every(value => validText(value, 100)) ||
           !validText(email, 254) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
-          !validText(password, 256) || password.length < 16) {
+          (authUserId ? !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(authUserId) : (!validText(password, 256) || password.length < 16))) {
           return res.status(400).json({ error: 'Invalid workspace or administrator details.' });
         }
         return res.json(await provisionManagedWorkspace(db, {
           id, name: name.trim(), city: city.trim(), adminName: adminName.trim(),
-          email, password, plan, modules
+          email, password: authUserId ? undefined : password, authUserId, plan, modules
         }));
       }
       let result;

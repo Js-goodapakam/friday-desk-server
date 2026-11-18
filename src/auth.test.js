@@ -5,7 +5,7 @@ const password='test-only-long-password';
 const encoded=hashPassword(password);
 const user={id:1,propertyId:9,name:'Test operator',email:'operator@example.test',role:'ADMIN',isActive:true,password_hash:encoded};
 function response(){return {statusCode:200,headers:{},setHeader(k,v){this.headers[k]=v;},status(code){this.statusCode=code;return this;},json(value){this.body=value;return this;}};}
-function fixture(access={}){const tokens=new Set();const db={async query(sql,args){if(sql.includes('FROM engagestay_managed_workspace'))return {rows:access.status?[access]:[]};if(sql.startsWith('SELECT u.*, c.'))return {rows:args[0]===user.email?[user]:[]};if(sql.startsWith('INSERT INTO friday_sessions')){tokens.add(args[0]);return {rows:[]};}if(sql.startsWith('SELECT u.* FROM friday_sessions'))return {rows:tokens.has(args[0])?[user]:[]};if(sql.startsWith('DELETE')){tokens.delete(args[0]);return {rows:[]};}throw Error('Unexpected query');}};return createAuth(db,{secure:false,origin:'http://localhost:5173'});}
+function fixture(access={}){const tokens=new Set();const db={async query(sql,args){if(sql.includes('FROM engagestay_managed_workspace'))return {rows:access.status?[access]:[]};if(sql.startsWith('SELECT u.*, c.'))return {rows:args[0]===user.email?[user]:[]};if(sql.includes('FROM friday_auth_identity'))return {rows:args[0]==='11111111-1111-4111-8111-111111111111'?[user]:[]};if(sql.startsWith('INSERT INTO friday_sessions')){tokens.add(args[0]);return {rows:[]};}if(sql.startsWith('SELECT u.* FROM friday_sessions'))return {rows:tokens.has(args[0])?[user]:[]};if(sql.startsWith('DELETE')){tokens.delete(args[0]);return {rows:[]};}throw Error('Unexpected query');}};return createAuth(db,{secure:false,origin:'http://localhost:5173'});}
 test('workspace suspension blocks new and existing sessions until reactivated',async()=>{
  const access={status:'active'};
  const auth=fixture(access);
@@ -45,4 +45,22 @@ test('isolated local mode accepts both loopback addresses on 5174 only outside s
   auth.checkOrigin({headers:{origin}},res,()=>{accepted=true;});
   assert.equal(accepted,!secure&&origin!=='http://untrusted.example:5174');
  }}finally{if(previous===undefined)delete process.env.FRIDAY_LOCAL_DEV;else process.env.FRIDAY_LOCAL_DEV=previous;}
+});
+test('a verified Supabase identity can create a PMS session only through its immutable identity mapping',async(t)=>{
+ const priorUrl=process.env.SUPABASE_URL,priorKey=process.env.SUPABASE_ANON_KEY;
+ process.env.SUPABASE_URL='https://test-project.supabase.co';process.env.SUPABASE_ANON_KEY='publishable-test-key';
+ t.mock.method(global,'fetch',async (_url,options)=>({ok:options.headers.Authorization==='Bearer verified-token',json:async()=>({id:'11111111-1111-4111-8111-111111111111',email_confirmed_at:'2026-01-01T00:00:00Z'})}));
+ try{
+  const auth=fixture(),res=response();
+  await auth.supabaseSession({headers:{authorization:'Bearer verified-token'},body:{}},res);
+  assert.equal(res.statusCode,200);assert.equal(res.body.user.id,user.id);assert.match(res.headers['Set-Cookie'],/HttpOnly/);
+  const denied=response();await auth.supabaseSession({headers:{authorization:'Bearer expired-token'},body:{}},denied);assert.equal(denied.statusCode,401);
+ }finally{if(priorUrl===undefined)delete process.env.SUPABASE_URL;else process.env.SUPABASE_URL=priorUrl;if(priorKey===undefined)delete process.env.SUPABASE_ANON_KEY;else process.env.SUPABASE_ANON_KEY=priorKey;}
+});
+test('a valid Supabase token is not enough without a provisioned identity mapping',async(t)=>{
+ const priorUrl=process.env.SUPABASE_URL,priorKey=process.env.SUPABASE_ANON_KEY;
+ process.env.SUPABASE_URL='https://test-project.supabase.co';process.env.SUPABASE_ANON_KEY='publishable-test-key';
+ t.mock.method(global,'fetch',async()=>({ok:true,json:async()=>({id:'22222222-2222-4222-8222-222222222222',email_confirmed_at:'2026-01-01T00:00:00Z'})}));
+ try{const res=response();await fixture().supabaseSession({headers:{authorization:'Bearer verified-token'},body:{}},res);assert.equal(res.statusCode,403);assert.equal(res.headers['Set-Cookie'],undefined);}
+ finally{if(priorUrl===undefined)delete process.env.SUPABASE_URL;else process.env.SUPABASE_URL=priorUrl;if(priorKey===undefined)delete process.env.SUPABASE_ANON_KEY;else process.env.SUPABASE_ANON_KEY=priorKey;}
 });

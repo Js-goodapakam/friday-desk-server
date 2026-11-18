@@ -4,7 +4,7 @@ const { hashPassword } = require('./auth');
 // The caller supplies a validated, stable customer UUID. All provisioning
 // records commit together so a retry cannot leave a partial workspace.
 async function provisionManagedWorkspace(db, customer) {
-  const { id, name, city, email, adminName, password, plan, modules } = customer;
+  const { id, name, city, email, adminName, password, authUserId, plan, modules } = customer;
   return db.withTransaction(async client => {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [id]);
     const existing = await client.query(
@@ -24,10 +24,19 @@ async function provisionManagedWorkspace(db, customer) {
        VALUES ($1, $2, $3, 'ADMIN', true, NOW(), NOW()) RETURNING id`,
       [propertyId, adminName, email.trim().toLowerCase()]
     );
-    await client.query(
-      'INSERT INTO friday_credentials (user_id, password_hash) VALUES ($1, $2)',
-      [admin.rows[0].id, hashPassword(password)]
-    );
+    if (authUserId) {
+      await client.query(
+        'INSERT INTO friday_auth_identity (auth_user_id,user_id,property_id) VALUES ($1,$2,$3)',
+        [authUserId, admin.rows[0].id, propertyId]
+      );
+    } else {
+      // Compatibility only: existing legacy accounts keep their current PMS
+      // password path. New Supabase-provisioned users never receive a copy.
+      await client.query(
+        'INSERT INTO friday_credentials (user_id, password_hash) VALUES ($1, $2)',
+        [admin.rows[0].id, hashPassword(password)]
+      );
+    }
     const workspace = await client.query(
       `INSERT INTO engagestay_managed_workspace (property_id, customer_id, status, plan, modules)
        VALUES ($1, $2, 'active', $3, $4) RETURNING property_id, status, plan, modules`,
