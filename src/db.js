@@ -2,6 +2,7 @@ if (process.env.FRIDAY_LOCAL_DEV === '1') {
   module.exports = require('./local-db');
 } else {
 const { Pool } = require("pg");
+const { withPgTransaction } = require("./pg-transaction");
 require("dotenv").config();
 
 const pool = new Pool({
@@ -27,9 +28,7 @@ async function closeDatabase() {
 }
 
 async function withTransaction(callback) {
- const client=await pool.connect();
- try {await client.query('BEGIN');const result=await callback(client);await client.query('COMMIT');return result;}
- catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  return withPgTransaction(pool, callback);
 }
 
 module.exports = {

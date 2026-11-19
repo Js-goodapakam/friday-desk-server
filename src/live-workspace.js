@@ -1,5 +1,6 @@
 const { isDeepStrictEqual } = require('node:util');
 const { canAccess } = require('./properties');
+const { validateReservationAllocations } = require('./reservation-allocation');
 
 const planModules = {
   basic: ['operations'],
@@ -88,9 +89,15 @@ function workspaceHandler(db) {
           }
           visible[key] = state[key];
         }
+        const nextState = { ...workspace.state, ...visible };
+        if (modules.includes('operations') &&
+            (Object.hasOwn(state, 'reservations') || Object.hasOwn(state, 'rooms'))) {
+          try { validateReservationAllocations(nextState); }
+          catch (error) { return { code: 409, body: { error: error.message } }; }
+        }
         await client.query(
           'UPDATE engagestay_workspace_state SET state=$2, version=version+1 WHERE property_id=$1',
-          [id, JSON.stringify({ ...workspace.state, ...visible })]
+          [id, JSON.stringify(nextState)]
         );
         return { body: { state: { ...visible, property }, version: version + 1, managed: true, modules } };
       });

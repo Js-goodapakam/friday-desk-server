@@ -5,8 +5,8 @@ on:
   push:
     paths:
       - '.github/workflows/isolated-postgres-tests.yml'
-      - 'scripts/assert-isolated-test-db.js'
-      - 'scripts/assert-isolated-test-db.test.js'
+      - 'scripts/**'
+      - 'sql/**'
       - 'src/**'
       - 'package.json'
       - 'package-lock.json'
@@ -63,47 +63,44 @@ jobs:
       - name: Install dependencies without postinstall or production secrets
         run: npm ci --ignore-scripts
 
-      - name: Verify fail-closed database safety guard
-        run: |
-          npm run test:isolated-db:guard
-          node scripts/assert-isolated-test-db.js
+      - name: Verify actual disposable PostgreSQL identity before tests
+        run: node scripts/assert-isolated-test-db.js
 
-      - name: Verify disposable database and SQL transactions
-        run: |
-          node <<'NODE'
-          const { Pool } = require('pg');
-          const { assertIsolatedTestDatabase } = require('./scripts/assert-isolated-test-db');
-          assertIsolatedTestDatabase();
-          const pool = new Pool({
-            connectionString: process.env.ENGAGE_TEST_DATABASE_URL,
-            ssl: false,
-          });
-          (async () => {
-            const client = await pool.connect();
-            try {
-              const identity = await client.query('SELECT current_database() AS db, current_user AS account');
-              if (identity.rows[0].db !== 'engage_stay_test' || identity.rows[0].account !== 'engage_test') {
-                throw new Error('Unexpected database identity — refusing to test');
-              }
-              await client.query('BEGIN');
-              await client.query('CREATE TABLE ci_disposable_smoke (id INT PRIMARY KEY)');
-              await client.query('INSERT INTO ci_disposable_smoke (id) VALUES (1)');
-              await client.query('ROLLBACK');
-              const result = await client.query("SELECT to_regclass('public.ci_disposable_smoke') AS relation");
-              if (result.rows[0].relation !== null) throw new Error('Transaction rollback did not remove test table');
-              console.log('Disposable PostgreSQL identity and rollback verified');
-            } finally {
-              client.release();
-              await pool.end();
-            }
-          })().catch(err => { console.error(err.message); process.exitCode = 1; });
-          NODE
+      - name: Exercise fail-closed database safety guard
+        run: npm run test:isolated-db:guard
 
-      - name: Run Engage Stay unit and isolated regression suite
+      - name: Apply actual managed workspace migration to temporary PostgreSQL
+        run: node scripts/setup-isolated-postgres.js
+
+      - name: Run existing application regression suite
         run: npm test
 
-      - name: Report coverage boundary
+      - name: Run real PostgreSQL reservation concurrency suite
+        shell: bash
         run: |
-          echo "Disposable PostgreSQL connection verified." >> "$GITHUB_STEP_SUMMARY"
-          echo "Guard tests and existing regression suite executed." >> "$GITHUB_STEP_SUMMARY"
-          echo "Reservation concurrency and full schema acceptance remain pending dedicated test implementation." >> "$GITHUB_STEP_SUMMARY"
+          set -o pipefail
+          node --test --test-reporter=tap tests/postgres-concurrency.test.js | tee postgres-concurrency.tap
+
+      - name: Summarize PostgreSQL test results
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Engage Stay isolated PostgreSQL 16"
+            echo "Database: engage_stay_test / engage_test on local GitHub Actions service"
+            echo "Managed workspace schema: sql/managed-workspace.sql"
+            if [[ -f postgres-concurrency.tap ]]; then
+              echo '### Concurrency tests'
+              grep -E '^# (tests|pass|fail|cancelled|skipped|duration_ms) ' postgres-concurrency.tap || true
+            else
+              echo 'Concurrency suite did not start or did not produce output.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload PostgreSQL test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-concurrency-tap
+          path: postgres-concurrency.tap
+          if-no-files-found: ignore
