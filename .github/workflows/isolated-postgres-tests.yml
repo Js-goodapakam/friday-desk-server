@@ -5,8 +5,8 @@ on:
   push:
     paths:
       - '.github/workflows/isolated-postgres-tests.yml'
-      - 'scripts/assert-isolated-test-db.js'
-      - 'scripts/assert-isolated-test-db.test.js'
+      - 'scripts/**'
+      - 'sql/**'
       - 'src/**'
       - 'package.json'
       - 'package-lock.json'
@@ -14,6 +14,7 @@ on:
     paths:
       - '.github/workflows/isolated-postgres-tests.yml'
       - 'scripts/**'
+      - 'sql/**'
       - 'src/**'
       - 'package.json'
       - 'package-lock.json'
@@ -27,7 +28,7 @@ concurrency:
 
 jobs:
   isolated-database:
-    name: Test against disposable PostgreSQL
+    name: Test against disposable PostgreSQL 16
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -37,13 +38,10 @@ jobs:
           POSTGRES_USER: engage_test
           POSTGRES_PASSWORD: engage_test_only_not_production
           POSTGRES_DB: engage_stay_test
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U engage_test -d engage_stay_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+          --health-interval 5s --health-timeout 5s --health-retries 12
 
     env:
       NODE_ENV: test
@@ -51,59 +49,25 @@ jobs:
       ENGAGE_TEST_DATABASE_URL: postgresql://engage_test:engage_test_only_not_production@127.0.0.1:5432/engage_stay_test?sslmode=disable
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
-
-      - name: Install dependencies without postinstall or production secrets
+      - name: Install dependencies without production secrets
         run: npm ci --ignore-scripts
-
       - name: Verify fail-closed database safety guard
         run: |
           npm run test:isolated-db:guard
           node scripts/assert-isolated-test-db.js
-
-      - name: Verify disposable database and SQL transactions
-        run: |
-          node <<'NODE'
-          const { Pool } = require('pg');
-          const { assertIsolatedTestDatabase } = require('./scripts/assert-isolated-test-db');
-          assertIsolatedTestDatabase();
-          const pool = new Pool({
-            connectionString: process.env.ENGAGE_TEST_DATABASE_URL,
-            ssl: false,
-          });
-          (async () => {
-            const client = await pool.connect();
-            try {
-              const identity = await client.query('SELECT current_database() AS db, current_user AS account');
-              if (identity.rows[0].db !== 'engage_stay_test' || identity.rows[0].account !== 'engage_test') {
-                throw new Error('Unexpected database identity — refusing to test');
-              }
-              await client.query('BEGIN');
-              await client.query('CREATE TABLE ci_disposable_smoke (id INT PRIMARY KEY)');
-              await client.query('INSERT INTO ci_disposable_smoke (id) VALUES (1)');
-              await client.query('ROLLBACK');
-              const result = await client.query("SELECT to_regclass('public.ci_disposable_smoke') AS relation");
-              if (result.rows[0].relation !== null) throw new Error('Transaction rollback did not remove test table');
-              console.log('Disposable PostgreSQL identity and rollback verified');
-            } finally {
-              client.release();
-              await pool.end();
-            }
-          })().catch(err => { console.error(err.message); process.exitCode = 1; });
-          NODE
-
-      - name: Run Engage Stay unit and isolated regression suite
+      - name: Apply CI-only schema and synthetic fixtures
+        run: node scripts/setup-isolated-postgres.js
+      - name: Run actual PostgreSQL acceptance tests
+        run: node --test src/postgres-acceptance.test.js
+      - name: Run existing regression suite
         run: npm test
-
-      - name: Report coverage boundary
+      - name: Report verified scope
         run: |
-          echo "Disposable PostgreSQL connection verified." >> "$GITHUB_STEP_SUMMARY"
-          echo "Guard tests and existing regression suite executed." >> "$GITHUB_STEP_SUMMARY"
-          echo "Reservation concurrency and full schema acceptance remain pending dedicated test implementation." >> "$GITHUB_STEP_SUMMARY"
+          echo "Disposable PostgreSQL 16 schema and synthetic fixtures applied." >> "$GITHUB_STEP_SUMMARY"
+          echo "Property isolation and row-lock/CAS concurrency tests executed against PostgreSQL." >> "$GITHUB_STEP_SUMMARY"
+          echo "Production Supabase RLS acceptance remains a separate staging-only requirement." >> "$GITHUB_STEP_SUMMARY"
