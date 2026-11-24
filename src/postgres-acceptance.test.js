@@ -30,6 +30,27 @@ test('PostgreSQL: tenant-owned workspace is isolated by property key', { skip },
   assert.equal(result.rowCount, 0);
 });
 
+test('PostgreSQL: immutable identity mapping and suspended workspaces deny cross-tenant use', { skip }, async () => {
+  const identity = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  await pool.query('INSERT INTO auth.users(id) VALUES($1)', [identity]);
+  await pool.query('INSERT INTO friday_auth_identity(auth_user_id,user_id,property_id) VALUES($1,$2,$3)', [identity, 2001, 1001]);
+  await pool.query("INSERT INTO engagestay_managed_workspace(property_id,customer_id,status,plan,modules) VALUES(1001,'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','active','Basic',ARRAY['reservations'])");
+  const active = await pool.query(`SELECT u.id, u."propertyId" FROM friday_auth_identity i JOIN "user" u ON u.id=i.user_id JOIN engagestay_managed_workspace w ON w.property_id=i.property_id WHERE i.auth_user_id=$1 AND u."isActive"=true AND w.status='active'`, [identity]);
+  assert.deepEqual(active.rows, [{ id: 2001, propertyId: 1001 }]);
+  await pool.query("UPDATE engagestay_managed_workspace SET status='suspended' WHERE property_id=1001");
+  const suspended = await pool.query(`SELECT u.id FROM friday_auth_identity i JOIN "user" u ON u.id=i.user_id JOIN engagestay_managed_workspace w ON w.property_id=i.property_id WHERE i.auth_user_id=$1 AND u."isActive"=true AND w.status='active'`, [identity]);
+  assert.equal(suspended.rowCount, 0);
+  const crossTenant = await pool.query('SELECT property_id FROM friday_auth_identity WHERE auth_user_id=$1 AND property_id=$2', [identity, 1002]);
+  assert.equal(crossTenant.rowCount, 0);
+});
+
+test('PostgreSQL: disabled identities cannot be selected for an authenticated session', { skip }, async () => {
+  await pool.query('UPDATE "user" SET "isActive"=false WHERE id=2001');
+  const result = await pool.query('SELECT id FROM "user" WHERE id=$1 AND "isActive"=true', [2001]);
+  assert.equal(result.rowCount, 0);
+  await pool.query('UPDATE "user" SET "isActive"=true WHERE id=2001');
+});
+
 test('PostgreSQL: row locking and compare-and-swap permit one reservation allocation', { skip }, async () => {
   const first = await pool.connect();
   const second = await pool.connect();
