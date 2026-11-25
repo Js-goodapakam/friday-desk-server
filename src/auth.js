@@ -24,7 +24,10 @@ const bearerToken = req => {
 function supabaseAuthConfig() {
   const url = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
   const key = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
-  return /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url) && key ? { url, key } : null;
+  const hosted = /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url);
+  const disposable = process.env.NODE_ENV === 'test' && process.env.ENGAGE_LOCAL_SUPABASE_ACCEPTANCE === '1' &&
+    /^http:\/\/127\.0\.0\.1:\d+$/.test(url);
+  return (hosted || disposable) && key ? { url, key } : null;
 }
 
 function createAuth(db, options = {}) {
