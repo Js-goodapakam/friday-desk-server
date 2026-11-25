@@ -36,7 +36,17 @@ function managedRoutes(db) {
         }));
       }
       let result;
-      if (action === 'sync_subscription') {
+      if (action === 'subscription_revision') {
+        if (req.body.productCode !== 'engage_stay' ||
+            !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(String(req.body.tenantId))) {
+          return res.status(400).json({ error: 'Invalid subscription scope.' });
+        }
+        const { rows: [workspace] } = await db.query(
+          'SELECT owner_tenant_id, subscription_revision::text AS revision FROM engagestay_managed_workspace WHERE customer_id=$1', [id]);
+        if (!workspace) return res.status(404).json({ error: 'Workspace not found.' });
+        if (workspace.owner_tenant_id !== req.body.tenantId) return res.status(409).json({ error: 'Workspace assignment rejected.' });
+        return res.json({ revision: workspace.revision });
+      } else if (action === 'sync_subscription') {
         const { tenantId, revision, productCode, subscriptionStatus, expiresAt } = req.body;
         if (productCode !== 'engage_stay' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(String(tenantId)) ||
             typeof revision !== 'string' || !/^[1-9][0-9]{0,17}$/.test(revision) ||
