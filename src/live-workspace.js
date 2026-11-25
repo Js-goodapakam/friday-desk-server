@@ -20,7 +20,8 @@ function workspaceHandler(db) {
     try {
       const outcome = await db.withTransaction(async client => {
         const { rows: [workspace] } = await client.query(
-          `SELECT m.status, m.plan, m.modules, s.state, s.version, p.name
+          `SELECT case when m.subscription_expires_at <= now() then 'suspended' else m.status end as status,
+                  m.plan, m.modules, s.state, s.version, p.name
              FROM engagestay_managed_workspace m
              JOIN engagestay_workspace_state s ON s.property_id = m.property_id
              JOIN property p ON p.id = m.property_id

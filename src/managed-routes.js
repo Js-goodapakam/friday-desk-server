@@ -36,14 +36,36 @@ function managedRoutes(db) {
         }));
       }
       let result;
-      if (action === 'configure') {
+      if (action === 'sync_subscription') {
+        const { tenantId, revision, productCode, subscriptionStatus, expiresAt } = req.body;
+        if (productCode !== 'engage_stay' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(String(tenantId)) ||
+            typeof revision !== 'string' || !/^[1-9][0-9]{0,17}$/.test(revision) ||
+            !Object.hasOwn(planModules, plan) || (expiresAt !== null && (typeof expiresAt !== 'string' || !Number.isFinite(Date.parse(expiresAt))))) {
+          return res.status(400).json({ error: 'Invalid subscription snapshot.' });
+        }
+        const active = ['ACTIVE','TRIAL'].includes(subscriptionStatus) && expiresAt !== null;
+        const outcome = await db.withTransaction(async client => {
+          const { rows: [workspace] } = await client.query(
+            'SELECT owner_tenant_id, subscription_revision FROM engagestay_managed_workspace WHERE customer_id=$1 FOR UPDATE', [id]);
+          if (!workspace) return { code: 404 };
+          if (workspace.owner_tenant_id && workspace.owner_tenant_id !== tenantId) return { code: 409 };
+          if (workspace.subscription_revision !== null && BigInt(workspace.subscription_revision) >= BigInt(revision)) {
+            return { code: 200, outcome: String(workspace.subscription_revision) === revision ? 'duplicate' : 'stale' };
+          }
+          await client.query(`UPDATE engagestay_managed_workspace SET owner_tenant_id=$2, subscription_revision=$3,
+            subscription_expires_at=$4, status=$5, plan=$6, modules=$7, updated_at=now() WHERE customer_id=$1`,
+          [id, tenantId, revision, expiresAt, active ? 'active' : 'suspended', plan, active ? planModules[plan] : []]);
+          return { code: 200, outcome: 'applied' };
+        });
+        return res.status(outcome.code).json(outcome.outcome ? { revision, outcome: outcome.outcome } : { error: 'Workspace assignment rejected.' });
+      } else if (action === 'configure') {
         result = await db.query(
-          'UPDATE engagestay_managed_workspace SET plan=$2, modules=$3, updated_at=now() WHERE customer_id=$1 RETURNING property_id,status,plan,modules',
+          'UPDATE engagestay_managed_workspace SET plan=$2, modules=$3, updated_at=now() WHERE customer_id=$1 AND subscription_revision IS NULL RETURNING property_id,status,plan,modules',
           [id, plan, modules]
         );
       } else if (action === 'suspend' || action === 'reactivate') {
         result = await db.query(
-          'UPDATE engagestay_managed_workspace SET status=$2, updated_at=now() WHERE customer_id=$1 RETURNING property_id,status,plan,modules',
+          "UPDATE engagestay_managed_workspace SET status=$2, updated_at=now() WHERE customer_id=$1 AND (subscription_revision IS NULL OR $2='suspended') RETURNING property_id,status,plan,modules",
           [id, action === 'suspend' ? 'suspended' : 'active']
         );
       } else if (action === 'sync_entitlements') {

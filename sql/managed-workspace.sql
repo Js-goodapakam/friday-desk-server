@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS engagestay_managed_workspace (
 );
 
 ALTER TABLE engagestay_managed_workspace ENABLE ROW LEVEL SECURITY;
+ALTER TABLE engagestay_managed_workspace
+  ADD COLUMN IF NOT EXISTS owner_tenant_id uuid UNIQUE,
+  ADD COLUMN IF NOT EXISTS subscription_revision bigint,
+  ADD COLUMN IF NOT EXISTS subscription_expires_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS engagestay_workspace_state (
   property_id integer PRIMARY KEY REFERENCES engagestay_managed_workspace(property_id),

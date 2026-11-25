@@ -5,6 +5,8 @@ const { assertIsolatedTestDatabase } = require('../scripts/assert-isolated-test-
 const model = require('./demo-data');
 const store = require('./demo-store');
 const { validateTransitions } = require('./reservation-transitions');
+const { managedRoutes } = require('./managed-routes');
+const { managedAccess } = require('./managed-access');
 
 const url = process.env.ENGAGE_TEST_DATABASE_URL;
 const skip = !url;
@@ -107,6 +109,40 @@ test.after(async () => {
   if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = originalNodeEnv;
   if (pool) await pool.end();
+});
+
+test('PostgreSQL: subscription receiver persists revisions, expiry and tenant binding', { skip }, async () => {
+  const customerId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const tenantId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const secret = require('node:crypto').randomUUID();
+  const prior = process.env.ENGAGE_OWNER_SERVICE_TOKEN;
+  process.env.ENGAGE_OWNER_SERVICE_TOKEN = secret;
+  await pool.query("INSERT INTO engagestay_managed_workspace(property_id,customer_id,status,plan) VALUES(1002,$1,'suspended','basic')", [customerId]);
+  const handler = managedRoutes(database());
+  const send = async (revision, overrides = {}) => {
+    let code = 200;
+    return handler({ get: () => 'Bearer ' + secret, params: { customerId }, body: {
+      action: 'sync_subscription', productCode: 'engage_stay', tenantId, revision, plan: 'premium',
+      subscriptionStatus: 'ACTIVE', expiresAt: '2099-01-01T00:00:00Z', ...overrides,
+    } }, { status(value) { code = value; return this; }, json(body) { return { code, body }; } });
+  };
+  try {
+    assert.equal((await send('10')).body.outcome, 'applied');
+    assert.equal((await send('10')).body.outcome, 'duplicate');
+    assert.equal((await send('9')).body.outcome, 'stale');
+    assert.equal((await send('11', { tenantId: customerId })).code, 409);
+    assert.equal((await managedAccess(database(), 1002)).status, 'active');
+    await send('11', { expiresAt: '2000-01-01T00:00:00Z' });
+    assert.equal((await managedAccess(database(), 1002)).status, 'suspended');
+    await send('12');
+    assert.equal((await managedAccess(database(), 1002)).status, 'active');
+    await send('13', { subscriptionStatus: 'SUSPENDED' });
+    assert.equal((await managedAccess(database(), 1002)).status, 'suspended');
+  } finally {
+    await pool.query('DELETE FROM engagestay_managed_workspace WHERE customer_id=$1', [customerId]);
+    if (prior === undefined) delete process.env.ENGAGE_OWNER_SERVICE_TOKEN;
+    else process.env.ENGAGE_OWNER_SERVICE_TOKEN = prior;
+  }
 });
 
 test('PostgreSQL: property access joins cannot return another property', { skip }, async () => {

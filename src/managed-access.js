@@ -2,7 +2,8 @@ async function managedAccess(db, propertyId) {
   if (db.file && process.env.FRIDAY_LOCAL_DEV === '1') return null;
   try {
     const { rows } = await db.query(
-      'SELECT status, plan, modules FROM engagestay_managed_workspace WHERE property_id = $1',
+      `SELECT case when subscription_expires_at <= now() then 'suspended' else status end as status,
+              plan, modules FROM engagestay_managed_workspace WHERE property_id = $1`,
       [propertyId]
     );
     return rows[0] || null;
