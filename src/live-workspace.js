@@ -13,6 +13,39 @@ const sections = {
   communications: ['communications', 'callActivities'],
 };
 
+const occupiedStatuses = new Set(['Confirmed', 'Modified', 'Checked In']);
+
+function isBookingDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
+}
+
+function reservationStateError(state) {
+  const rooms = new Set((state.rooms || []).map(room => room?.number));
+  const guests = new Set((state.guests || []).map(guest => guest?.id));
+  const roomBookings = new Map();
+  for (const booking of state.reservations || []) {
+    if (!booking || typeof booking !== 'object') return { code: 400, body: { error: 'Invalid reservation.' } };
+    if (!occupiedStatuses.has(booking.status)) continue;
+    if (!booking.room || !booking.guestId || !rooms.has(booking.room) || !guests.has(booking.guestId) ||
+        !isBookingDate(booking.arrival) || !isBookingDate(booking.departure) || booking.arrival >= booking.departure) {
+      return { code: 400, body: { error: 'Active reservations require a valid room, guest and stay dates.' } };
+    }
+    if (!roomBookings.has(booking.room)) roomBookings.set(booking.room, []);
+    roomBookings.get(booking.room).push(booking);
+  }
+  for (const bookings of roomBookings.values()) {
+    bookings.sort((left, right) => left.arrival.localeCompare(right.arrival));
+    for (let index = 1; index < bookings.length; index++) {
+      if (bookings[index].arrival < bookings[index - 1].departure) {
+        return { code: 409, body: { error: 'The room has an overlapping reservation.' } };
+      }
+    }
+  }
+  return null;
+}
+
 function workspaceHandler(db) {
   return async (req, res, next) => {
     const id = Number(req.params.id);
@@ -88,6 +121,10 @@ function workspaceHandler(db) {
             return { code: 400, body: { error: 'Invalid workspace section.' } };
           }
           visible[key] = state[key];
+        }
+        if (['rooms', 'guests', 'reservations'].some(key => Object.hasOwn(state, key))) {
+          const error = reservationStateError({ ...workspace.state, ...visible });
+          if (error) return error;
         }
         await client.query(
           'UPDATE engagestay_workspace_state SET state=$2, version=version+1 WHERE property_id=$1',
