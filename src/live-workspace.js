@@ -1,6 +1,7 @@
 const { isDeepStrictEqual } = require('node:util');
 const { canAccess } = require('./properties');
 const { settleInvoice } = require('./invoice-settlement');
+const { applyFolio, totals } = require('./managed-folio');
 
 const planModules = {
   basic: ['operations'],
@@ -9,7 +10,7 @@ const planModules = {
 };
 const sections = {
   operations: ['rooms', 'guests', 'reservations', 'requests', 'tasks', 'housekeeping'],
-  finance: ['folios', 'payments', 'invoices', 'invoiceSettings'],
+  finance: ['folios', 'payments', 'invoices', 'invoiceSettings', 'folioLedger'],
   inventory: ['ratePlans', 'inventoryOverrides', 'inventoryAudit', 'revenueManagement'],
   communications: ['communications', 'callActivities'],
 };
@@ -101,13 +102,35 @@ function workspaceHandler(db) {
         if (req.method === 'GET') {
           return { body: { state: { ...visible, property }, version: workspace.version, managed: true, modules } };
         }
-        const { state, version, invoicePayment } = req.body || {};
+        const { state, version, invoicePayment, folioOperation } = req.body || {};
+        if (folioOperation !== undefined) {
+          if (!modules.includes('finance') || !modules.includes('operations')) return { code: 403, body: { error: 'Finance access denied.' } };
+          const outcome = applyFolio(workspace.state,folioOperation,req.user,new Date().toISOString());
+          if (outcome.replay) return { body: { state: { ...visible, property }, version: workspace.version, managed: true, modules } };
+          if (version !== workspace.version) return { code: 409, body: { error: 'Reload the workspace before saving.' } };
+          if (outcome.error) return { code: outcome.status, body: { error: outcome.error } };
+          await client.query('UPDATE engagestay_workspace_state SET state=$2, version=version+1 WHERE property_id=$1',
+            [id, JSON.stringify({ ...workspace.state, ...outcome })]);
+          return { body: { state: { ...visible, ...outcome, property }, version: version + 1, managed: true, modules } };
+        }
         if (invoicePayment !== undefined) {
           if (!modules.includes('finance') || !modules.includes('operations')) return { code: 403, body: { error: 'Finance access denied.' } };
           const outcome = settleInvoice(workspace.state, invoicePayment, req.user.id, new Date().toISOString());
           if (outcome.replay) return { body: { state: { ...visible, property }, version: workspace.version, managed: true, modules } };
           if (version !== workspace.version) return { code: 409, body: { error: 'Reload the workspace before saving.' } };
           if (outcome.error) return { code: outcome.status, body: { error: outcome.error } };
+          const invoice=workspace.state.invoices.find(row=>row.id===invoicePayment.invoiceId);
+          if (invoice.folio) {
+            const ledger=workspace.state.folioLedger || [];
+            if (ledger.some(row=>row.id===invoicePayment.id)) return {code:409,body:{error:'Payment key already belongs to a folio entry.'}};
+            const current=totals(ledger.filter(row=>row.reservationId===invoice.reservationId));
+            if (current.charges!==Math.round(invoice.total*100) || current.paid!==Math.round(invoice.paid*100)) {
+              return { code:409, body:{ error:'This issued invoice differs from the adjusted folio. Review before collecting.' } };
+            }
+            outcome.folioLedger=[...ledger,{id:invoicePayment.id,kind:'payment',action:'invoice-payment',
+              reservationId:invoice.reservationId,invoiceId:invoice.id,amount:Math.round(invoicePayment.amount*100),
+              reference:invoicePayment.reference.trim(),actorId:req.user.id,at:new Date().toISOString()}];
+          }
           await client.query('UPDATE engagestay_workspace_state SET state=$2, version=version+1 WHERE property_id=$1',
             [id, JSON.stringify({ ...workspace.state, ...outcome })]);
           return { body: { state: { ...visible, ...outcome, property }, version: version + 1, managed: true, modules } };
@@ -116,6 +139,7 @@ function workspaceHandler(db) {
         if (!state || typeof state !== 'object' || Number(state.property?.id) !== id) {
           return { code: 400, body: { error: 'Invalid workspace state.' } };
         }
+        if (Object.hasOwn(state,'folioLedger')) return { code:400, body:{ error:'Use folio operations to record ledger entries.' } };
         const supported = new Set(['property', ...Object.values(sections).flat()]);
         if (Object.keys(state).some(key => !supported.has(key))) {
           return { code: 400, body: { error: 'This workspace section is not supported.' } };
@@ -133,6 +157,23 @@ function workspaceHandler(db) {
           }
           visible[key] = state[key];
         }
+        const folioStays = new Set((workspace.state.folioLedger || []).map(entry=>entry.reservationId));
+        if (Object.hasOwn(state,'reservations') && (workspace.state.reservations || []).some(stay=>{
+          if (!folioStays.has(stay.id)) return false;
+          const next=visible.reservations?.find(row=>row?.id===stay.id);
+          return !next || ['arrival','departure','rate','paid','guestId'].some(key=>next[key]!==stay[key]);
+        })) return {code:409,body:{error:'Use folio operations for changes to billed stay amounts.'}};
+        if (Object.hasOwn(state,'reservations') && visible.reservations?.some(stay=>
+          stay?.status==='Checked Out' && folioStays.has(stay.id) &&
+          workspace.state.reservations?.find(row=>row?.id===stay.id)?.status!=='Checked Out' &&
+          totals(workspace.state.folioLedger.filter(row=>row.reservationId===stay.id)).balance>0
+        )) return {code:409,body:{error:'Settle the folio balance before checkout.'}};
+        if (Object.hasOwn(state,'invoices') && (workspace.state.invoices || []).filter(row=>row?.folio).some(invoice=>
+          !isDeepStrictEqual(invoice,visible.invoices?.find(row=>row?.id===invoice.id))
+        )) return {code:409,body:{error:'Issued folio invoices cannot be edited.'}};
+        if (Object.hasOwn(state,'invoices') && visible.invoices?.some(row=>folioStays.has(row?.reservationId) &&
+          !(workspace.state.invoices || []).some(invoice=>invoice.id===row.id)
+        )) return {code:409,body:{error:'Issue this invoice from its folio.'}};
         const settled = (workspace.state.payments || []).filter(payment => payment.invoiceId);
         if (settled.some(payment =>
           (Object.hasOwn(state, 'payments') && !isDeepStrictEqual(payment, visible.payments?.find(row => row?.id === payment.id))) ||
