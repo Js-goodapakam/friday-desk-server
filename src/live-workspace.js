@@ -1,5 +1,6 @@
 const { isDeepStrictEqual } = require('node:util');
 const { canAccess } = require('./properties');
+const { settleInvoice } = require('./invoice-settlement');
 
 const planModules = {
   basic: ['operations'],
@@ -100,7 +101,17 @@ function workspaceHandler(db) {
         if (req.method === 'GET') {
           return { body: { state: { ...visible, property }, version: workspace.version, managed: true, modules } };
         }
-        const { state, version } = req.body || {};
+        const { state, version, invoicePayment } = req.body || {};
+        if (invoicePayment !== undefined) {
+          if (!modules.includes('finance') || !modules.includes('operations')) return { code: 403, body: { error: 'Finance access denied.' } };
+          const outcome = settleInvoice(workspace.state, invoicePayment, req.user.id, new Date().toISOString());
+          if (outcome.replay) return { body: { state: { ...visible, property }, version: workspace.version, managed: true, modules } };
+          if (version !== workspace.version) return { code: 409, body: { error: 'Reload the workspace before saving.' } };
+          if (outcome.error) return { code: outcome.status, body: { error: outcome.error } };
+          await client.query('UPDATE engagestay_workspace_state SET state=$2, version=version+1 WHERE property_id=$1',
+            [id, JSON.stringify({ ...workspace.state, ...outcome })]);
+          return { body: { state: { ...visible, ...outcome, property }, version: version + 1, managed: true, modules } };
+        }
         if (version !== workspace.version) return { code: 409, body: { error: 'Reload the workspace before saving.' } };
         if (!state || typeof state !== 'object' || Number(state.property?.id) !== id) {
           return { code: 400, body: { error: 'Invalid workspace state.' } };
@@ -121,6 +132,15 @@ function workspaceHandler(db) {
             return { code: 400, body: { error: 'Invalid workspace section.' } };
           }
           visible[key] = state[key];
+        }
+        const settled = (workspace.state.payments || []).filter(payment => payment.invoiceId);
+        if (settled.some(payment =>
+          (Object.hasOwn(state, 'payments') && !isDeepStrictEqual(payment, visible.payments?.find(row => row?.id === payment.id))) ||
+          (Object.hasOwn(state, 'invoices') && !isDeepStrictEqual(workspace.state.invoices?.find(row => row?.id === payment.invoiceId), visible.invoices?.find(row => row?.id === payment.invoiceId))) ||
+          (Object.hasOwn(state, 'reservations') && workspace.state.reservations?.find(row => row?.id === payment.reservationId)?.paid !== visible.reservations?.find(row => row?.id === payment.reservationId)?.paid)
+        )) return { code: 409, body: { error: 'Recorded invoice payments require the finance workflow.' } };
+        if (Object.hasOwn(state,'payments') && visible.payments?.some(payment=>payment?.invoiceId && !settled.some(row=>row.id===payment.id))) {
+          return { code: 400, body: { error: 'Use invoice settlement to record invoice payments.' } };
         }
         if (['rooms', 'guests', 'reservations'].some(key => Object.hasOwn(state, key))) {
           const error = reservationStateError({ ...workspace.state, ...visible });
