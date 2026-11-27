@@ -123,7 +123,11 @@ function workspaceHandler(db) {
           if (invoice.folio) {
             const ledger=workspace.state.folioLedger || [];
             if (ledger.some(row=>row.id===invoicePayment.id)) return {code:409,body:{error:'Payment key already belongs to a folio entry.'}};
-            const current=totals(ledger.filter(row=>row.reservationId===invoice.reservationId));
+            const entries=ledger.filter(row=>row.reservationId===invoice.reservationId);
+            if (entries.some(row=>row.kind==='payment' && row.reference===invoicePayment.reference.trim())) {
+              return {code:409,body:{error:'Payment reference already recorded for this folio.'}};
+            }
+            const current=totals(entries);
             if (current.charges!==Math.round(invoice.total*100) || current.paid!==Math.round(invoice.paid*100)) {
               return { code:409, body:{ error:'This issued invoice differs from the adjusted folio. Review before collecting.' } };
             }
