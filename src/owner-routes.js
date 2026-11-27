@@ -1,8 +1,18 @@
 const {hashPassword}=require('./auth');
 const {canAccess}=require('./properties');
 const roles=['ADMIN','MANAGER','FRONT_DESK','HOUSEKEEPING','REVENUE','FINANCE','RESERVATIONS'];
+function disposableOwnerAccess(req,db){
+ if(!req.managedWorkspace || !db.pool || process.env.NODE_ENV!=='test' ||
+    process.env.ENGAGE_LOCAL_SUPABASE_ACCEPTANCE!=='1')return false;
+ try{
+  const database=new URL(db.pool.options.connectionString);
+  const auth=new URL(process.env.SUPABASE_URL);
+  return database.protocol==='postgresql:'&&database.hostname==='127.0.0.1'&&
+    auth.protocol==='http:'&&auth.hostname==='127.0.0.1';
+ }catch{return false;}
+}
 function ownerRoutes(db){
- async function allowed(req,res){if(process.env.FRIDAY_LOCAL_DEV!=='1'&&(db.file||process.env.NODE_ENV!=='production')){res.status(503).json({error:'Owner administration storage requires deployment configuration.'});return false;}if(!['ADMIN','MANAGER'].includes(req.user.role)){res.status(403).json({error:'Owner or manager access required.'});return false;}return true;}
+ async function allowed(req,res){if(process.env.FRIDAY_LOCAL_DEV!=='1'&&(db.file||process.env.NODE_ENV!=='production')&&!disposableOwnerAccess(req,db)){res.status(503).json({error:'Owner administration storage requires deployment configuration.'});return false;}if(!['ADMIN','MANAGER'].includes(req.user.role)){res.status(403).json({error:'Owner or manager access required.'});return false;}return true;}
  async function schema(){if(process.env.FRIDAY_LOCAL_DEV!=='1'){const existing=await db.query("SELECT to_regclass('public.friday_staff_profile') AS staff, to_regclass('public.friday_owner_settings') AS settings");if(!existing.rows[0]?.staff||!existing.rows[0]?.settings)throw Error('Owner administration migration required.');return;}await db.query('CREATE TABLE IF NOT EXISTS friday_staff_profile(user_id INTEGER PRIMARY KEY REFERENCES "user"(id),payload TEXT NOT NULL)');await db.query('CREATE TABLE IF NOT EXISTS friday_owner_settings(user_id INTEGER PRIMARY KEY REFERENCES "user"(id),payload TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1)');}
  async function properties(req){const rows=(await db.query('SELECT * FROM property')).rows;const result=[];for(const p of rows)if(require('./demo-data').hotels.some(h=>h[0]===p.code)&&await canAccess(db,{...req.user,propertyId:req.user.homePropertyId||req.user.propertyId},p.id)){const saved=await require('./demo-store').read(db,p.id).catch(()=>null);if(saved)Object.assign(p,require('./demo-store').stats(saved.state));result.push(p);}return result;}
  async function get(req,res){try{if(!await allowed(req,res))return;
