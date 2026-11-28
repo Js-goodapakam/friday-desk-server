@@ -30,7 +30,20 @@ async function main() {
         "isActive" boolean NOT NULL DEFAULT true
       );
     `);
-    for (const file of ['auth.sql', 'property-access.sql', 'managed-workspace.sql', 'sample-workspaces.sql']) {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS guest (id integer PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS reservation (id integer PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS payment (id integer PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS room (id integer PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS "roomType" (id integer PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS "serviceRequest" (id integer PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS "teleCMIUserMapping" (id integer PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS "callLog" (id integer PRIMARY KEY);
+      GRANT SELECT, INSERT, UPDATE, DELETE ON property, guest, reservation, "user",
+        payment, room, "roomType", "serviceRequest", "teleCMIUserMapping", "callLog" TO anon, authenticated;
+    `);
+    for (const file of ['auth.sql', 'property-access.sql', 'managed-workspace.sql', 'sample-workspaces.sql',
+      'owner-administration.sql', 'legacy-browser-boundary.sql']) {
       await pool.query(await readFile(path.join(__dirname, '..', 'sql', file), 'utf8'));
     }
     process.stdout.write('Isolated Engage Stay PostgreSQL schema applied.\n');

@@ -111,6 +111,22 @@ test.after(async () => {
   if (pool) await pool.end();
 });
 
+test('PostgreSQL: legacy browser role grants are removed and server reads still work', {skip}, async () => {
+  const names = ['property','guest','reservation','user','payment','room','roomType','serviceRequest','teleCMIUserMapping','callLog'];
+  const {rows}=await pool.query(`SELECT relname,relrowsecurity,
+    has_table_privilege('anon',c.oid,'SELECT,INSERT,UPDATE,DELETE') AS anon,
+    has_table_privilege('authenticated',c.oid,'SELECT,INSERT,UPDATE,DELETE') AS authenticated
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND relname=ANY($1)`,[names]);
+  assert.equal(rows.length,names.length);
+  for(const row of rows) {
+    assert.equal(row.relrowsecurity,true,row.relname);
+    assert.equal(row.anon,false,row.relname);
+    assert.equal(row.authenticated,false,row.relname);
+  }
+  assert.equal((await pool.query('SELECT id FROM property WHERE id=1001')).rowCount,1);
+});
+
 test('PostgreSQL: subscription receiver persists revisions, expiry and tenant binding', { skip }, async () => {
   const customerId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   const tenantId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';

@@ -15,7 +15,8 @@ const pool = new Pool({
 });
 
 pool.on("error", (err) => {
-  console.error("Unexpected PostgreSQL pool error:", err);
+  console.error(JSON.stringify({event:'stay_postgres_pool_error',
+    code:/^[A-Z0-9_]{2,24}$/.test(err?.code||'')?err.code:'UNKNOWN'}));
 });
 
 async function query(text, params = []) {

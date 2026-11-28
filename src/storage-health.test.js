@@ -1,4 +1,12 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),{handler,provider}=require('./storage-health');
 const response=()=>({headers:{},statusCode:200,setHeader(k,v){this.headers[k]=v;},status(n){this.statusCode=n;return this;},json(x){this.body=x;return this;}});
+test('managed readiness checks the required managed tables without the sample workspace',async()=>{
+ const {health}=require('./storage-health');
+ const db={query:async(_sql,params)=>{
+  assert.deepEqual(params,['public.engagestay_managed_workspace']);
+  return {rows:[{workspace_ready:true,credentials_ready:true,sessions_ready:true,state_ready:true,access_ready:true,identity_ready:true}]};
+ }};
+ assert.equal((await health(db,'',true)).ready,true);
+});
 test('storage readiness requires all persistence and authentication tables',async()=>{for(const ready of [true,false]){const res=response();await handler({query:async()=>({rows:[{workspace_ready:ready,credentials_ready:true,sessions_ready:true}]})},'postgresql://user:secret@aws-0-ap-south-1.pooler.supabase.com/postgres')({},res);assert.equal(res.statusCode,ready?200:503);assert.equal(res.body.storage.provider,'supabase');assert.equal(res.body.storage.ready,ready);assert.ok(!JSON.stringify(res.body).includes('secret'));}});
 test('database failures are reported safely rather than passing a static health check',async()=>{const res=response();await handler({query:async()=>{throw Error('credential-secret');}},'invalid')({},res);assert.equal(res.statusCode,503);assert.equal(res.body.storage.connected,false);assert.ok(!JSON.stringify(res.body).includes('credential-secret'));assert.equal(provider('postgresql://user:pass@fake-supabase.com/test'),'postgresql');});
